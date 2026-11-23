@@ -27,15 +27,18 @@ def health_check(request):
         db_status = f'error: {str(e)}'
 
     # 2. Redis / Celery Broker Connectivity Check
+    is_eager = getattr(settings, 'CELERY_TASK_ALWAYS_EAGER', False)
     redis_status = 'connected'
     broker_url = getattr(settings, 'CELERY_BROKER_URL', '')
-    if broker_url and broker_url.startswith('redis://'):
+    if broker_url and broker_url.startswith('redis://') and not is_eager:
         try:
             import redis
             r = redis.from_url(broker_url, socket_connect_timeout=2, socket_timeout=2)
             r.ping()
         except Exception as re_err:
             redis_status = f'error: {str(re_err)}'
+    elif is_eager:
+        redis_status = 'eager_mode (in-process synchronous)'
     else:
         redis_status = 'not_configured'
 
@@ -54,7 +57,7 @@ def health_check(request):
 
     is_healthy = (
         db_status == 'connected'
-        and not redis_status.startswith('error')
+        and (not redis_status.startswith('error') or is_eager)
         and storage_status == 'ready'
     )
 
