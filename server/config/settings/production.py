@@ -32,17 +32,22 @@ if not ALLOWED_HOSTS:
 # ==========================================
 # Database Configuration (PostgreSQL Required)
 # ==========================================
-database_url = os.getenv('DATABASE_URL')
-if database_url:
+database_url = os.getenv('DATABASE_URL', '').strip()
+if database_url and not any(ph in database_url.lower() for ph in ['paste_your', 'placeholder', 'todo']):
     from urllib.parse import urlparse, unquote
     parsed = urlparse(database_url)
+    if not parsed.hostname:
+        raise ImproperlyConfigured(
+            f"DATABASE_URL is invalid or missing hostname. Received: '{database_url}'. "
+            "Please configure the Internal Database URL from your Render PostgreSQL instance."
+        )
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
             'NAME': unquote(parsed.path.lstrip('/')),
             'USER': unquote(parsed.username or ''),
             'PASSWORD': unquote(parsed.password or ''),
-            'HOST': parsed.hostname or 'localhost',
+            'HOST': parsed.hostname,
             'PORT': str(parsed.port or 5432),
             'CONN_MAX_AGE': int(os.getenv('DB_CONN_MAX_AGE', '600')),
             'OPTIONS': {
@@ -58,7 +63,8 @@ else:
 
     if not all([db_name, db_user, db_password, db_host]):
         raise ImproperlyConfigured(
-            "Production requires PostgreSQL: either DATABASE_URL or (DB_NAME, DB_USER, DB_PASSWORD, DB_HOST) must be defined."
+            "Production requires PostgreSQL: either DATABASE_URL or (DB_NAME, DB_USER, DB_PASSWORD, DB_HOST) must be defined. "
+            "Please create a PostgreSQL database on Render and set its Internal Database URL in DATABASE_URL."
         )
 
     DATABASES = {
