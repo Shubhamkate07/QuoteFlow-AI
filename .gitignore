@@ -1,0 +1,32 @@
+# ==========================================
+# Root Git Ignore for QuoteFlow AI
+# ==========================================
+
+# Environment variables & secrets (CRITICAL: Never commit .env files)
+**/.env
+**/.env.*
+!**/.env.example
+
+# Python
+**/venv/
+**/.venv/
+**/__pycache__/
+**/*.py[cod]
+**/*.sqlite3
+**/*.sqlite3-journal
+
+# Uploads & Build outputs
+**/media/
+**/staticfiles/
+**/dist/
+**/node_modules/
+**/coverage/
+
+# Logs
+**/*.log
+
+# OS & IDEs
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

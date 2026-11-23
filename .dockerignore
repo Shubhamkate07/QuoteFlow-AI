@@ -1,0 +1,29 @@
+# Version control
+.git/
+.gitignore
+
+# Environment files with secrets
+.env
+.env.*
+!.env.example
+
+# Client artifacts
+client/node_modules/
+client/dist/
+client/coverage/
+
+# Server artifacts
+server/venv/
+server/.venv/
+server/__pycache__/
+server/*.sqlite3
+server/media/*
+!server/media/.gitkeep
+server/staticfiles/*
+
+# IDE and temporary files
+.vscode/
+.idea/
+*.log
+.DS_Store
+Thumbs.db
