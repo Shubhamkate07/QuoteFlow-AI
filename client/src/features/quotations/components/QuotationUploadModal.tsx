@@ -159,12 +159,20 @@ export const QuotationUploadModal: React.FC<QuotationUploadModalProps> = ({
       if (data) {
         if (typeof data.detail === 'string') {
           message = data.detail;
-        } else if (Array.isArray(data.quotation_number) && data.quotation_number[0]) {
-          message = String(data.quotation_number[0]);
-        } else if (Array.isArray(data.file) && data.file[0]) {
-          message = String(data.file[0]);
-        } else if (Array.isArray(data.supplier) && data.supplier[0]) {
-          message = String(data.supplier[0]);
+        } else if (typeof data.message === 'string') {
+          message = data.message;
+        } else if (typeof data.error === 'string') {
+          message = data.error;
+        } else {
+          // Flatten DRF validation error dict into human-readable field errors
+          const errorEntries = Object.entries(data)
+            .map(([field, errVal]) => {
+              const text = Array.isArray(errVal) ? errVal.join(', ') : String(errVal);
+              return `${field.replace(/_/g, ' ')}: ${text}`;
+            });
+          if (errorEntries.length > 0) {
+            message = errorEntries.join(' | ');
+          }
         }
       } else if (err instanceof Error) {
         message = err.message;

@@ -146,7 +146,12 @@ USE_X_ACCEL_REDIRECT = get_env_bool('USE_X_ACCEL_REDIRECT', default=False)
 # ==========================================
 # Production Celery Configuration
 # ==========================================
-CELERY_TASK_ALWAYS_EAGER = False
+# On single-container platforms (e.g. Render free tier without external Redis), default to eager mode
+CELERY_TASK_ALWAYS_EAGER = get_env_bool(
+    'CELERY_TASK_ALWAYS_EAGER',
+    default=(not bool(os.getenv('REDIS_URL')) and not bool(os.getenv('CELERY_BROKER_URL')))
+)
+CELERY_TASK_EAGER_PROPAGATES = True
 CELERY_WORKER_CONCURRENCY = int(os.getenv('CELERY_CONCURRENCY', '4'))
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # 1 task per worker prevents long OCR tasks starvation
 CELERY_TASK_ACKS_LATE = True           # Re-queue tasks if worker is terminated unexpectedly
