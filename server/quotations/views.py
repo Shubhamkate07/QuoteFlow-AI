@@ -16,7 +16,7 @@ from django.conf import settings
 
 from organizations.selectors import get_active_organization_for_request
 from quotations.permissions import IsQuotationOrganizationMember
-from quotations.models import DocumentProcessingStatus
+from quotations.models import DocumentProcessingStatus, QuotationDocument, Quotation
 from quotations.validators import sanitize_filename
 from quotations import selectors, services
 from quotations.serializers import (
