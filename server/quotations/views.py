@@ -228,7 +228,7 @@ class QuotationViewSet(viewsets.ViewSet):
                     connection.close()
                     try:
                         from quotations.tasks import process_document_task
-                        process_document_task(doc_id_str)
+                        process_document_task.apply(args=[doc_id_str])
                     except Exception as p_err:
                         logger.error("Background document processing error for %s: %s", doc_id_str, p_err)
                     finally:
@@ -414,7 +414,7 @@ class QuotationDocumentViewSet(viewsets.ViewSet):
                     connection.close()
                     try:
                         from quotations.tasks import process_document_task
-                        process_document_task(doc_id_str)
+                        process_document_task.apply(args=[doc_id_str])
                     except Exception as p_err:
                         logger.error("Background document processing error for %s: %s", doc_id_str, p_err)
                     finally:

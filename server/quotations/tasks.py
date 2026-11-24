@@ -96,7 +96,7 @@ def process_document_task(self, document_id: str) -> dict:
             def _async_ai_extraction():
                 connection.close()
                 try:
-                    run_ai_extraction_task(doc_id_for_ai)
+                    run_ai_extraction_task.apply(args=[doc_id_for_ai])
                 except Exception as ai_err:
                     logger.warning("Background AI extraction error for %s: %s", doc_id_for_ai, ai_err)
                 finally:
