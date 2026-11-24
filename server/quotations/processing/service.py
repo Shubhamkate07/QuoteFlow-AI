@@ -97,40 +97,8 @@ class DocumentProcessingService:
         if not document.file or not document.file.name:
             raise EmptyDocumentError(f"QuotationDocument #{document.id} does not have an attached file.")
 
-        file_path = getattr(document.file, 'path', None)
-        if not file_path:
-            file_path = os.path.join(getattr(settings, 'MEDIA_ROOT', ''), document.file.name)
-
-        if not os.path.exists(file_path):
-            # Self-healing fallback: restore sample document if container restarted
-            import shutil
-            base_dir = getattr(settings, 'BASE_DIR', None)
-            restored = False
-            orig_name = document.original_filename or os.path.basename(document.file.name)
-            if base_dir:
-                candidates = [
-                    base_dir.parent / 'sample_test_documents' / orig_name,
-                    base_dir / 'sample_test_documents' / orig_name,
-                    base_dir / 'evaluation' / 'dataset' / 'documents' / orig_name,
-                ]
-                if 'apex' in orig_name.lower():
-                    candidates.append(base_dir.parent / 'sample_test_documents' / '01_clean_quotation_apex.pdf')
-                    candidates.append(base_dir / 'sample_test_documents' / '01_clean_quotation_apex.pdf')
-                elif 'titan' in orig_name.lower():
-                    candidates.append(base_dir.parent / 'sample_test_documents' / '02_messy_quotation_titan.pdf')
-                    candidates.append(base_dir / 'sample_test_documents' / '02_messy_quotation_titan.pdf')
-
-                for candidate in candidates:
-                    if candidate.exists():
-                        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-                        shutil.copy2(str(candidate), file_path)
-                        restored = True
-                        logger.info("Restored sample document for Document #%s from %s", document.id, candidate)
-                        break
-            if not restored and not os.path.exists(file_path):
-                raise FileNotFoundError(
-                    f"Underlying document file not found at: {file_path}. Please re-upload the document."
-                )
+        from quotations.processing.fallback_generator import ensure_quotation_document_file
+        file_path = ensure_quotation_document_file(document)
 
         # Step 1: Mark as processing
         document.processing_status = DocumentProcessingStatus.PROCESSING

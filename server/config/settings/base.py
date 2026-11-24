@@ -240,8 +240,9 @@ SIMPLE_JWT = {
 # ==========================================
 # Google Gemini AI Configuration
 # ==========================================
+os.environ.setdefault('GOOGLE_GENAI_API_VERSION', 'v1beta')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '').strip()
-GEMINI_MODEL_NAME = os.getenv('GEMINI_MODEL_NAME', 'gemini-2.5-flash').strip()
+GEMINI_MODEL_NAME = os.getenv('GEMINI_MODEL_NAME', 'gemini-3.5-flash').strip() or 'gemini-3.5-flash'
 GEMINI_TIMEOUT_SECONDS = int(os.getenv('GEMINI_TIMEOUT_SECONDS', '60'))
 GEMINI_MAX_RETRIES = int(os.getenv('GEMINI_MAX_RETRIES', '3'))
 GEMINI_RETRY_BACKOFF_FACTOR = float(os.getenv('GEMINI_RETRY_BACKOFF_FACTOR', '2.0'))

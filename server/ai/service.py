@@ -171,6 +171,8 @@ class GeminiService:
             raise ValueError("Prompt cannot be empty.")
 
         target_model = model or self.config.model_name
+        if target_model in ('gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.0-pro', 'gemini-1.5-pro', 'gemini-2.5-flash-lite'):
+            target_model = 'gemini-3.5-flash'
         gen_temp = temperature if temperature is not None else self.config.temperature
 
         config = types.GenerateContentConfig(
@@ -179,15 +181,34 @@ class GeminiService:
             max_output_tokens=max_output_tokens,
         )
 
-        def _call():
-            native = self.client.get_client()
-            return native.models.generate_content(
-                model=target_model,
-                contents=prompt,
-                config=config,
-            )
+        candidate_models = [target_model]
+        for fallback in ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.8-flash']:
+            if fallback not in candidate_models:
+                candidate_models.append(fallback)
 
-        response = self._execute_with_retry(_call, operation_name=f"TextGeneration[{target_model}]")
+        response = None
+        last_call_err = None
+        for current_model in candidate_models:
+            def _call():
+                native = self.client.get_client()
+                return native.models.generate_content(
+                    model=current_model,
+                    contents=prompt,
+                    config=config,
+                )
+
+            try:
+                response = self._execute_with_retry(_call, operation_name=f"TextGeneration[{current_model}]")
+                break
+            except Exception as call_err:
+                logger.warning("Model %s failed (%s), trying next fallback model...", current_model, call_err)
+                last_call_err = call_err
+                continue
+
+        if response is None:
+            if last_call_err:
+                raise last_call_err
+            raise GeminiAPIError("Failed to obtain response from any candidate Gemini model.", status_code=500)
 
         # Validate response content
         if not response or not response.text:
@@ -218,6 +239,8 @@ class GeminiService:
             raise ValueError("Prompt cannot be empty.")
 
         target_model = model or self.config.model_name
+        if target_model in ('gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.0-pro', 'gemini-1.5-pro', 'gemini-2.5-flash-lite'):
+            target_model = 'gemini-3.5-flash'
         gen_temp = temperature if temperature is not None else self.config.temperature
 
         # Build schema configuration
@@ -231,7 +254,7 @@ class GeminiService:
         )
 
         candidate_models = [target_model]
-        for fallback in ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']:
+        for fallback in ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.8-flash']:
             if fallback not in candidate_models:
                 candidate_models.append(fallback)
 
@@ -250,12 +273,9 @@ class GeminiService:
                 response = self._execute_with_retry(_call, operation_name=f"StructuredGeneration[{current_model}]")
                 break
             except Exception as call_err:
-                err_str = str(call_err).lower()
-                if "not found" in err_str or "404" in err_str or "unsupported" in err_str:
-                    logger.warning("Model %s unavailable, trying next fallback model...", current_model)
-                    last_call_err = call_err
-                    continue
-                raise
+                logger.warning("Model %s failed (%s), trying next fallback model...", current_model, call_err)
+                last_call_err = call_err
+                continue
 
         if response is None:
             if last_call_err:

@@ -60,14 +60,14 @@ class GeminiConfigAndClientTests(TestCase):
         """Tests reading configuration from Django settings."""
         with override_settings(
             GEMINI_API_KEY="AIzaSyTestKey1234567890abcdefghij",
-            GEMINI_MODEL_NAME="gemini-2.5-flash",
+            GEMINI_MODEL_NAME="gemini-3.5-flash",
             GEMINI_TIMEOUT_SECONDS=45,
             GEMINI_MAX_RETRIES=2,
             GEMINI_RETRY_BACKOFF_FACTOR=1.5,
             GEMINI_TEMPERATURE=0.2,
         ):
             config = GeminiConfig.from_settings()
-            self.assertEqual(config.model_name, "gemini-2.5-flash")
+            self.assertEqual(config.model_name, "gemini-3.5-flash")
             self.assertEqual(config.timeout_seconds, 45)
             self.assertEqual(config.max_retries, 2)
             self.assertEqual(config.retry_backoff_factor, 1.5)
@@ -90,7 +90,7 @@ class GeminiServiceTests(TestCase):
     def setUp(self):
         self.config = GeminiConfig(
             api_key="AIzaSyMockKeyForTesting1234567890",
-            model_name="gemini-2.5-flash",
+            model_name="gemini-3.5-flash",
             timeout_seconds=5,
             max_retries=2,
             retry_backoff_factor=1.0,
@@ -210,7 +210,7 @@ class GeminiServiceTests(TestCase):
         status_dict = self.service.health_check()
         self.assertEqual(status_dict['status'], 'healthy')
         self.assertTrue(status_dict['configured'])
-        self.assertEqual(status_dict['model'], 'gemini-2.5-flash')
+        self.assertEqual(status_dict['model'], 'gemini-3.5-flash')
         self.assertIn("AIza****7890", status_dict['masked_key'])
         self.assertNotIn("AIzaSyMockKeyForTesting", str(status_dict))
 
@@ -254,7 +254,7 @@ class AIHealthCheckAPITests(APITestCase):
             mock_health.return_value = {
                 'status': 'healthy',
                 'configured': True,
-                'model': 'gemini-2.5-flash',
+                'model': 'gemini-3.5-flash',
                 'masked_key': 'AIza****9999',
                 'latency_ms': 120.5,
             }

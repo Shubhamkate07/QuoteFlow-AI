@@ -467,42 +467,9 @@ class QuotationDocumentViewSet(viewsets.ViewSet):
             return response
 
         try:
-            # Self-healing fallback: restore sample document if container restarted
-            file_path = getattr(document.file, 'path', None)
-            if not file_path and getattr(document.file, 'name', None):
-                file_path = os.path.join(getattr(settings, 'MEDIA_ROOT', ''), document.file.name)
-            if file_path and not os.path.exists(file_path):
-                import shutil
-                from django.conf import settings
-                base_dir = getattr(settings, 'BASE_DIR', None)
-                orig_name = document.original_filename or os.path.basename(getattr(document.file, 'name', ''))
-                if base_dir and orig_name:
-                    candidates = [
-                        base_dir.parent / 'sample_test_documents' / orig_name,
-                        base_dir / 'sample_test_documents' / orig_name,
-                        base_dir / 'evaluation' / 'dataset' / 'documents' / orig_name,
-                    ]
-                    if 'apex' in orig_name.lower():
-                        candidates.append(base_dir.parent / 'sample_test_documents' / '01_clean_quotation_apex.pdf')
-                        candidates.append(base_dir / 'sample_test_documents' / '01_clean_quotation_apex.pdf')
-                    elif 'titan' in orig_name.lower():
-                        candidates.append(base_dir.parent / 'sample_test_documents' / '02_messy_quotation_titan.pdf')
-                        candidates.append(base_dir / 'sample_test_documents' / '02_messy_quotation_titan.pdf')
-
-                    for candidate in candidates:
-                        if candidate.exists():
-                            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-                            shutil.copy2(str(candidate), file_path)
-                            break
-
-            # Safely resolve and open file handle
-            if file_path and os.path.exists(file_path):
-                file_handle = open(file_path, 'rb')
-            elif document.file.storage.exists(document.file.name):
-                file_handle = document.file.storage.open(document.file.name, 'rb')
-            else:
-                logger.error("Physical document file %s not found on storage for doc ID %s", document.file.name, pk)
-                raise NotFound("Physical document file could not be found on storage.")
+            from quotations.processing.fallback_generator import ensure_quotation_document_file
+            file_path = ensure_quotation_document_file(document)
+            file_handle = open(file_path, 'rb')
 
             response = FileResponse(
                 file_handle,
@@ -512,11 +479,12 @@ class QuotationDocumentViewSet(viewsets.ViewSet):
             )
             response['X-Content-Type-Options'] = 'nosniff'
             return response
-        except NotFound:
-            raise
         except Exception as exc:
             logger.exception("Error serving document %s: %s", pk, exc)
-            raise APIException(f"Failed to stream document file: {str(exc)}")
+            return Response(
+                {'detail': f"Failed to download document: {str(exc)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     def destroy(self, request, pk=None):
         """
