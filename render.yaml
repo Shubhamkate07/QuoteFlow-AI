@@ -4,7 +4,7 @@ services:
     runtime: python
     rootDir: server
     buildCommand: pip install -r requirements.txt && python manage.py migrate && python manage.py collectstatic --noinput
-    startCommand: gunicorn config.wsgi:application
+    startCommand: gunicorn config.wsgi:application --timeout 120 --workers 2
     plan: free
     envVars:
       - key: DJANGO_ENV

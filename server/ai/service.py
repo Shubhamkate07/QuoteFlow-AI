@@ -230,15 +230,37 @@ class GeminiService:
             system_instruction=system_instruction,
         )
 
-        def _call():
-            native = self.client.get_client()
-            return native.models.generate_content(
-                model=target_model,
-                contents=prompt,
-                config=config,
-            )
+        candidate_models = [target_model]
+        for fallback in ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']:
+            if fallback not in candidate_models:
+                candidate_models.append(fallback)
 
-        response = self._execute_with_retry(_call, operation_name=f"StructuredGeneration[{target_model}]")
+        response = None
+        last_call_err = None
+        for current_model in candidate_models:
+            def _call():
+                native = self.client.get_client()
+                return native.models.generate_content(
+                    model=current_model,
+                    contents=prompt,
+                    config=config,
+                )
+
+            try:
+                response = self._execute_with_retry(_call, operation_name=f"StructuredGeneration[{current_model}]")
+                break
+            except Exception as call_err:
+                err_str = str(call_err).lower()
+                if "not found" in err_str or "404" in err_str or "unsupported" in err_str:
+                    logger.warning("Model %s unavailable, trying next fallback model...", current_model)
+                    last_call_err = call_err
+                    continue
+                raise
+
+        if response is None:
+            if last_call_err:
+                raise last_call_err
+            raise GeminiAPIError("Failed to obtain response from any candidate Gemini model.", status_code=500)
 
         raw_text = getattr(response, 'text', '') or ''
         if not raw_text.strip():

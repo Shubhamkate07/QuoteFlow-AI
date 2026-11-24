@@ -42,6 +42,7 @@ export const QuotationsPage: React.FC = () => {
   const [replaceQuotation, setReplaceQuotation] = useState<Quotation | null>(null);
   const [deleteQuotationTarget, setDeleteQuotationTarget] = useState<Quotation | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Compute stats
   const totalCount = quotations.length;
@@ -73,10 +74,13 @@ export const QuotationsPage: React.FC = () => {
     if (!deleteQuotationTarget) return;
     try {
       setIsDeleting(true);
+      setDeleteError(null);
       await deleteQuotation(deleteQuotationTarget.id);
       setDeleteQuotationTarget(null);
-    } catch (err) {
+      await refreshQuotations();
+    } catch (err: any) {
       console.error('Failed to delete quotation:', err);
+      setDeleteError(err?.response?.data?.detail || err?.message || 'Failed to delete quotation');
     } finally {
       setIsDeleting(false);
     }
@@ -426,10 +430,14 @@ export const QuotationsPage: React.FC = () => {
       {/* Delete Quotation Modal */}
       <DeleteQuotationModal
         isOpen={!!deleteQuotationTarget}
-        onClose={() => setDeleteQuotationTarget(null)}
+        onClose={() => {
+          setDeleteQuotationTarget(null);
+          setDeleteError(null);
+        }}
         quotation={deleteQuotationTarget}
         onConfirm={handleDeleteConfirm}
         isDeleting={isDeleting}
+        error={deleteError}
       />
     </PageContainer>
   );

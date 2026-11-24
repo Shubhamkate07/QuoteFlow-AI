@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageContainer } from '../../components/layout/PageContainer';
 import { Button } from '../../components/ui/Button';
 import { DocumentViewer } from '../../features/quotations/components/review/DocumentViewer';
@@ -12,6 +12,7 @@ import { ExtractionLineItemsEditor } from '../../features/quotations/components/
 import { ExtractionFinancialsCard } from '../../features/quotations/components/review/ExtractionFinancialsCard';
 import { ApproveExtractionModal } from '../../features/quotations/components/review/ApproveExtractionModal';
 import { AuditHistoryModal } from '../../features/quotations/components/review/AuditHistoryModal';
+import { DeleteQuotationModal } from '../../features/quotations/components/DeleteQuotationModal';
 import { useQuotation } from '../../features/quotations/context/QuotationContext';
 import { quotationService } from '../../features/quotations/services/quotationService';
 import {
@@ -44,11 +45,14 @@ import {
   Check,
   XCircle,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
 
 export const QuotationReviewPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const { getQuotationById } = useQuotation();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { getQuotationById, deleteQuotation, refreshQuotations } = useQuotation();
   // Direct quotation query fallback if context is not yet loaded (e.g. on direct browser refresh)
   const quotationDetailQuery = useQuery({
     queryKey: ['quotation', id],
@@ -103,6 +107,29 @@ export const QuotationReviewPage: React.FC = () => {
   // Modals state
   const [isApproveModalOpen, setIsApproveModalOpen] = useState<boolean>(false);
   const [isAuditModalOpen, setIsAuditModalOpen] = useState<boolean>(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState<boolean>(false);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const handleDeleteQuotation = async () => {
+    const targetId = quotation?.id || extraction?.quotation_id || id;
+    if (!targetId) return;
+    try {
+      setIsDeleting(true);
+      setDeleteError(null);
+      await deleteQuotation(targetId);
+      queryClient.invalidateQueries({ queryKey: ['quotation'] });
+      queryClient.invalidateQueries({ queryKey: ['quotations'] });
+      await refreshQuotations();
+      setIsDeleteModalOpen(false);
+      navigate(ROUTES.QUOTATIONS);
+    } catch (err: any) {
+      console.error('Delete quotation failed:', err);
+      setDeleteError(err?.response?.data?.detail || err?.message || 'Failed to delete quotation');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // Layout View mode: 'balanced' (50/50), 'docFocus' (65/35), 'dataFocus' (35/65)
   const [layoutMode, setLayoutMode] = useState<'balanced' | 'docFocus' | 'dataFocus'>('balanced');
@@ -349,6 +376,7 @@ export const QuotationReviewPage: React.FC = () => {
 
   // Processing or Pending State
   if (extraction.status === 'processing' || extraction.status === 'pending') {
+    const docId = extraction.document_id || quotation?.documents?.[0]?.id;
     return (
       <PageContainer>
         <div className="max-w-2xl mx-auto py-16 space-y-6">
@@ -362,7 +390,7 @@ export const QuotationReviewPage: React.FC = () => {
                 Document Extraction in Progress...
               </h3>
               <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-                Gemini 2.0 is reading <span className="font-semibold text-slate-800">{extraction.document_filename}</span>,
+                Gemini 2.0 is reading <span className="font-semibold text-slate-800">{extraction.document_filename || quotation?.fileName || 'quotation document'}</span>,
                 extracting supplier metadata, commercial terms, line item pricing, and running deterministic validation rules.
               </p>
             </div>
@@ -375,6 +403,57 @@ export const QuotationReviewPage: React.FC = () => {
               <Clock className="w-3.5 h-3.5" />
               <span>Status: {extraction.status.toUpperCase()} • Polling server every 2.5s</span>
             </div>
+
+            {/* Escape Controls if process is taking too long or worker died */}
+            <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center justify-center gap-3">
+              {docId && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={triggerExtractionMutation.isPending}
+                  onClick={async () => {
+                    try {
+                      const res = await triggerExtractionMutation.mutateAsync({
+                        documentId: docId,
+                        sync: true,
+                      });
+                      if (res && (res as any).id) {
+                        setLocalExtraction(res as BackendQuotationExtraction);
+                      }
+                    } catch (err) {
+                      console.error('Trigger extraction failed:', err);
+                    }
+                  }}
+                  leftIcon={triggerExtractionMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                >
+                  {triggerExtractionMutation.isPending ? 'Extracting...' : 'Force Re-Extract with Gemini'}
+                </Button>
+              )}
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setLocalExtraction(null)}
+                className="text-xs"
+              >
+                Reset View
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsDeleteModalOpen(true)}
+                className="text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+                leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+              >
+                Delete Quotation
+              </Button>
+            </div>
+            {triggerExtractionMutation.isError && (
+              <p className="text-xs text-rose-500 font-medium">
+                {(triggerExtractionMutation.error as any)?.response?.data?.detail || triggerExtractionMutation.error.message || 'Extraction failed.'}
+              </p>
+            )}
           </div>
 
           <div className="text-center">
@@ -383,6 +462,21 @@ export const QuotationReviewPage: React.FC = () => {
             </Link>
           </div>
         </div>
+
+        {/* Delete Quotation Modal */}
+        {isDeleteModalOpen && (
+          <DeleteQuotationModal
+            isOpen={isDeleteModalOpen}
+            onClose={() => {
+              setIsDeleteModalOpen(false);
+              setDeleteError(null);
+            }}
+            quotation={quotation || null}
+            onConfirm={handleDeleteQuotation}
+            isDeleting={isDeleting}
+            error={deleteError}
+          />
+        )}
       </PageContainer>
     );
   }
@@ -413,9 +507,33 @@ export const QuotationReviewPage: React.FC = () => {
               >
                 {triggerExtractionMutation.isPending ? 'Retrying...' : 'Retry Extraction'}
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsDeleteModalOpen(true)}
+                className="text-rose-600 hover:bg-rose-50"
+                leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+              >
+                Delete Quotation
+              </Button>
             </div>
           </div>
         </div>
+
+        {/* Delete Quotation Modal */}
+        {isDeleteModalOpen && (
+          <DeleteQuotationModal
+            isOpen={isDeleteModalOpen}
+            onClose={() => {
+              setIsDeleteModalOpen(false);
+              setDeleteError(null);
+            }}
+            quotation={quotation || null}
+            onConfirm={handleDeleteQuotation}
+            isDeleting={isDeleting}
+            error={deleteError}
+          />
+        )}
       </PageContainer>
     );
   }
@@ -750,11 +868,36 @@ export const QuotationReviewPage: React.FC = () => {
                     Approve
                   </Button>
                 )}
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsDeleteModalOpen(true)}
+                  leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+                  className="text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+                >
+                  Delete Quotation
+                </Button>
               </div>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Delete Quotation Modal */}
+      {isDeleteModalOpen && (
+        <DeleteQuotationModal
+          isOpen={isDeleteModalOpen}
+          onClose={() => {
+            setIsDeleteModalOpen(false);
+            setDeleteError(null);
+          }}
+          quotation={quotation || null}
+          onConfirm={handleDeleteQuotation}
+          isDeleting={isDeleting}
+          error={deleteError}
+        />
+      )}
 
       {/* Approve Extraction Modal */}
       {isApproveModalOpen && (

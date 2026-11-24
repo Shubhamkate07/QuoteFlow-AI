@@ -109,8 +109,29 @@ class QuotationExtractionViewSet(viewsets.ViewSet):
         review status, reviewer info, and recent human corrections.
         """
         extraction = self._get_extraction_or_404(request, pk)
+
+        # Auto-heal stale extractions: if stuck in PROCESSING for > 45s, mark as FAILED so UI doesn't hang
+        if extraction.status == ExtractionStatus.PROCESSING:
+            from django.utils import timezone
+            from datetime import timedelta
+            if timezone.now() - extraction.updated_at > timedelta(seconds=45):
+                extraction.status = ExtractionStatus.FAILED
+                extraction.error_message = (
+                    "Extraction timed out or worker process was interrupted. Click 'Retry Extraction' to run extraction again."
+                )
+                extraction.save(update_fields=['status', 'error_message', 'updated_at'])
+
         serializer = QuotationExtractionSerializer(extraction)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def destroy(self, request, pk=None):
+        """
+        DELETE /api/extractions/{id}/
+        Deletes an extraction record.
+        """
+        extraction = self._get_extraction_or_404(request, pk)
+        extraction.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=False, methods=['post'], url_path='document/(?P<document_id>[^/.]+)')
     def extract_document(self, request, document_id=None):

@@ -22,7 +22,7 @@ logger = logging.getLogger('quoteflow.ai.client')
 class GeminiConfig:
     """Configuration parameters for Gemini AI services."""
     api_key: str
-    model_name: str = 'gemini-3.5-flash'
+    model_name: str = 'gemini-2.5-flash'
     timeout_seconds: int = 60
     max_retries: int = 3
     retry_backoff_factor: float = 2.0
@@ -33,7 +33,7 @@ class GeminiConfig:
         """Loads configuration from Django settings."""
         return cls(
             api_key=getattr(settings, 'GEMINI_API_KEY', '').strip(),
-            model_name=getattr(settings, 'GEMINI_MODEL_NAME', 'gemini-3.5-flash').strip() or 'gemini-3.5-flash',
+            model_name=getattr(settings, 'GEMINI_MODEL_NAME', 'gemini-2.5-flash').strip() or 'gemini-2.5-flash',
             timeout_seconds=int(getattr(settings, 'GEMINI_TIMEOUT_SECONDS', 60)),
             max_retries=int(getattr(settings, 'GEMINI_MAX_RETRIES', 3)),
             retry_backoff_factor=float(getattr(settings, 'GEMINI_RETRY_BACKOFF_FACTOR', 2.0)),

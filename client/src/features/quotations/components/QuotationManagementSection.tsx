@@ -49,6 +49,7 @@ export const QuotationManagementSection: React.FC<QuotationManagementSectionProp
   const [replaceQuotation, setReplaceQuotation] = useState<Quotation | null>(null);
   const [deleteQuotationTarget, setDeleteQuotationTarget] = useState<Quotation | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Status Filter tab
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -70,10 +71,12 @@ export const QuotationManagementSection: React.FC<QuotationManagementSectionProp
     if (!deleteQuotationTarget) return;
     try {
       setIsDeleting(true);
+      setDeleteError(null);
       await deleteQuotation(deleteQuotationTarget.id);
       setDeleteQuotationTarget(null);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to delete quotation:', err);
+      setDeleteError(err?.response?.data?.detail || err?.message || 'Failed to delete quotation');
     } finally {
       setIsDeleting(false);
     }
@@ -373,10 +376,14 @@ export const QuotationManagementSection: React.FC<QuotationManagementSectionProp
       {/* Delete Quotation Modal */}
       <DeleteQuotationModal
         isOpen={!!deleteQuotationTarget}
-        onClose={() => setDeleteQuotationTarget(null)}
+        onClose={() => {
+          setDeleteQuotationTarget(null);
+          setDeleteError(null);
+        }}
         quotation={deleteQuotationTarget}
         onConfirm={handleDeleteConfirm}
         isDeleting={isDeleting}
+        error={deleteError}
       />
     </>
   );

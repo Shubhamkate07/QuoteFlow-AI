@@ -11,6 +11,7 @@ interface DeleteQuotationModalProps {
   quotation: Quotation | null;
   onConfirm: () => void;
   isDeleting?: boolean;
+  error?: string | null;
 }
 
 export const DeleteQuotationModal: React.FC<DeleteQuotationModalProps> = ({
@@ -19,6 +20,7 @@ export const DeleteQuotationModal: React.FC<DeleteQuotationModalProps> = ({
   quotation,
   onConfirm,
   isDeleting = false,
+  error = null,
 }) => {
   if (!quotation) return null;
 
@@ -49,6 +51,12 @@ export const DeleteQuotationModal: React.FC<DeleteQuotationModalProps> = ({
       }
     >
       <div className="space-y-4">
+        {error && (
+          <div className="p-3 bg-rose-100 border border-rose-300 rounded-lg text-xs text-rose-900 font-medium">
+            Deletion failed: {error}
+          </div>
+        )}
+
         <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg flex items-start gap-2.5 text-xs text-rose-800">
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
           <p>
