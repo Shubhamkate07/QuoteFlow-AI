@@ -58,11 +58,15 @@ export function useTriggerExtraction() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ documentId, sync, model }: { documentId: string; sync?: boolean; model?: string }) =>
+    mutationFn: ({ documentId, sync = true, model }: { documentId: string; sync?: boolean; model?: string }) =>
       extractionService.triggerExtraction(documentId, sync, model),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: EXTRACTION_KEYS.all });
-      queryClient.setQueryData(EXTRACTION_KEYS.detail(data.id), data);
+      if (data && data.id) {
+        queryClient.setQueryData(EXTRACTION_KEYS.detail(data.id), data);
+      }
+      queryClient.invalidateQueries({ queryKey: ['quotation'] });
+      queryClient.invalidateQueries({ queryKey: ['quotations'] });
     },
   });
 }

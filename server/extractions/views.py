@@ -125,9 +125,15 @@ class QuotationExtractionViewSet(viewsets.ViewSet):
         if not document:
             raise NotFound("Quotation document not found in your organization.")
 
+        from django.conf import settings
+
         serializer = TriggerExtractionSerializer(data=request.data or request.query_params)
         serializer.is_valid(raise_exception=True)
-        is_sync = serializer.validated_data.get('sync', False) or request.query_params.get('sync') == 'true'
+        is_sync = (
+            serializer.validated_data.get('sync', False)
+            or request.query_params.get('sync') == 'true'
+            or getattr(settings, 'CELERY_TASK_ALWAYS_EAGER', False)
+        )
         model_name = serializer.validated_data.get('model')
 
         # Synchronous execution

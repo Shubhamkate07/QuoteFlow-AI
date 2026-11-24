@@ -62,18 +62,20 @@ export const QuotationReviewPage: React.FC = () => {
 
   // Queries: try by extraction ID first, fallback to quotation's extractions
   const directExtractionQuery = useExtraction(id);
-  const quotationExtractionsQuery = useExtractionsForQuotation(
-    directExtractionQuery.isError ? id : undefined
-  );
+  const quotationExtractionsQuery = useExtractionsForQuotation(id);
+
+  // Local state to store freshly extracted data immediately upon trigger
+  const [localExtraction, setLocalExtraction] = useState<BackendQuotationExtraction | null>(null);
 
   // Determine active extraction
   const extraction: BackendQuotationExtraction | undefined = useMemo(() => {
+    if (localExtraction) return localExtraction;
     if (directExtractionQuery.data) return directExtractionQuery.data;
     if (quotationExtractionsQuery.data && quotationExtractionsQuery.data.length > 0) {
       return quotationExtractionsQuery.data[0];
     }
     return undefined;
-  }, [directExtractionQuery.data, quotationExtractionsQuery.data]);
+  }, [localExtraction, directExtractionQuery.data, quotationExtractionsQuery.data]);
 
   const isLoading = directExtractionQuery.isLoading || quotationExtractionsQuery.isLoading;
 
@@ -243,12 +245,19 @@ export const QuotationReviewPage: React.FC = () => {
   };
 
   // Trigger retry if extraction failed
-  const handleRetryExtraction = () => {
+  const handleRetryExtraction = async () => {
     if (extraction?.document_id) {
-      triggerExtractionMutation.mutate({
-        documentId: extraction.document_id,
-        sync: false,
-      });
+      try {
+        const res = await triggerExtractionMutation.mutateAsync({
+          documentId: extraction.document_id,
+          sync: true,
+        });
+        if (res && (res as any).id) {
+          setLocalExtraction(res as BackendQuotationExtraction);
+        }
+      } catch (err) {
+        console.error('Retry extraction failed:', err);
+      }
     }
   };
 
@@ -303,15 +312,34 @@ export const QuotationReviewPage: React.FC = () => {
               </Button>
             </Link>
             {attachedDoc && (
-              <Button
-                variant="primary"
-                size="sm"
-                disabled={triggerExtractionMutation.isPending}
-                onClick={() => triggerExtractionMutation.mutate({ documentId: attachedDoc.id, sync: false })}
-                leftIcon={triggerExtractionMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              >
-                {triggerExtractionMutation.isPending ? 'Extracting with Gemini 2.0...' : 'Extract with Gemini 2.0'}
-              </Button>
+              <div className="flex flex-col items-center gap-2">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={triggerExtractionMutation.isPending}
+                  onClick={async () => {
+                    try {
+                      const res = await triggerExtractionMutation.mutateAsync({
+                        documentId: attachedDoc.id,
+                        sync: true,
+                      });
+                      if (res && (res as any).id) {
+                        setLocalExtraction(res as BackendQuotationExtraction);
+                      }
+                    } catch (err) {
+                      console.error('Trigger extraction failed:', err);
+                    }
+                  }}
+                  leftIcon={triggerExtractionMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                >
+                  {triggerExtractionMutation.isPending ? 'Extracting with Gemini 2.0...' : 'Extract with Gemini 2.0'}
+                </Button>
+                {triggerExtractionMutation.isError && (
+                  <p className="text-xs text-rose-500 font-medium">
+                    {(triggerExtractionMutation.error as any)?.response?.data?.detail || triggerExtractionMutation.error.message || 'Extraction failed. Please check Gemini API key.'}
+                  </p>
+                )}
+              </div>
             )}
           </div>
         </div>
