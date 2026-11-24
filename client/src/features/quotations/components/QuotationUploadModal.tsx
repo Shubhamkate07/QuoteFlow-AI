@@ -153,19 +153,22 @@ export const QuotationUploadModal: React.FC<QuotationUploadModalProps> = ({
 
       handleClose();
     } catch (err: unknown) {
-      const apiErr = err as { response?: { data?: Record<string, unknown> } };
+      const apiErr = err as { response?: { status?: number; data?: unknown } };
       const data = apiErr.response?.data;
       let message = 'Upload failed. Please check your document and try again.';
-      if (data) {
-        if (typeof data.detail === 'string') {
-          message = data.detail;
-        } else if (typeof data.message === 'string') {
-          message = data.message;
-        } else if (typeof data.error === 'string') {
-          message = data.error;
+      if (typeof data === 'string' && data.length < 200) {
+        message = data;
+      } else if (data && typeof data === 'object') {
+        const dict = data as Record<string, unknown>;
+        if (typeof dict.detail === 'string') {
+          message = dict.detail;
+        } else if (typeof dict.message === 'string') {
+          message = dict.message;
+        } else if (typeof dict.error === 'string') {
+          message = dict.error;
         } else {
           // Flatten DRF validation error dict into human-readable field errors
-          const errorEntries = Object.entries(data)
+          const errorEntries = Object.entries(dict)
             .map(([field, errVal]) => {
               const text = Array.isArray(errVal) ? errVal.join(', ') : String(errVal);
               return `${field.replace(/_/g, ' ')}: ${text}`;
@@ -174,6 +177,8 @@ export const QuotationUploadModal: React.FC<QuotationUploadModalProps> = ({
             message = errorEntries.join(' | ');
           }
         }
+      } else if (apiErr.response?.status) {
+        message = `Server responded with status HTTP ${apiErr.response.status}. Please try again.`;
       } else if (err instanceof Error) {
         message = err.message;
       }

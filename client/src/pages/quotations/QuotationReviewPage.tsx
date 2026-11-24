@@ -62,7 +62,7 @@ export const QuotationReviewPage: React.FC = () => {
     retry: 1,
   });
 
-  const quotation = quotationDetailQuery.data || (id ? getQuotationById(id) : undefined);
+  const quotation = quotationDetailQuery.data || (id && !quotationDetailQuery.isError ? getQuotationById(id) : undefined);
 
   // Queries: try by extraction ID first, fallback to quotation's extractions
   const [localExtraction, setLocalExtraction] = useState<BackendQuotationExtraction | null>(null);
@@ -318,6 +318,30 @@ export const QuotationReviewPage: React.FC = () => {
           <div className="text-center">
             <h3 className="text-sm font-semibold text-slate-900">Loading AI Quotation Review...</h3>
             <p className="text-xs text-slate-500 mt-1">Retrieving extracted data and deterministic flags</p>
+          </div>
+        </div>
+      </PageContainer>
+    );
+  }
+
+  // Quotation deleted or not found
+  if (quotationDetailQuery.isError && !quotation) {
+    return (
+      <PageContainer>
+        <div className="text-center py-20 max-w-lg mx-auto space-y-4">
+          <div className="w-16 h-16 rounded-full bg-rose-50 border border-rose-200 flex items-center justify-center mx-auto text-rose-500">
+            <AlertTriangle className="w-8 h-8" />
+          </div>
+          <h2 className="text-lg font-bold text-slate-900">Quotation Not Found</h2>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            This quotation does not exist or has been deleted from your organization.
+          </p>
+          <div className="pt-2">
+            <Link to={ROUTES.QUOTATIONS}>
+              <Button variant="primary" size="sm">
+                ← Return to Quotations List
+              </Button>
+            </Link>
           </div>
         </div>
       </PageContainer>

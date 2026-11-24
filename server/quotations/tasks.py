@@ -85,11 +85,25 @@ def process_document_task(self, document_id: str) -> dict:
             result.processing_time_ms,
         )
 
-        # Automatically trigger Gemini AI extraction on the processed document
+        # Automatically trigger Gemini AI extraction on the processed document asynchronously
         try:
+            import threading
+            from django.db import connection
             from extractions.tasks import run_ai_extraction_task
-            run_ai_extraction_task.delay(str(document.id))
-            logger.info("[DocumentTask %s] Dispatched run_ai_extraction_task for Document #%s", task_id, document_id)
+
+            doc_id_for_ai = str(document.id)
+
+            def _async_ai_extraction():
+                connection.close()
+                try:
+                    run_ai_extraction_task(doc_id_for_ai)
+                except Exception as ai_err:
+                    logger.warning("Background AI extraction error for %s: %s", doc_id_for_ai, ai_err)
+                finally:
+                    connection.close()
+
+            threading.Thread(target=_async_ai_extraction, daemon=True).start()
+            logger.info("[DocumentTask %s] Dispatched run_ai_extraction_task in background thread for Document #%s", task_id, document_id)
         except Exception as ai_dispatch_err:
             logger.warning(
                 "[DocumentTask %s] Could not automatically trigger AI extraction for Document #%s: %s",

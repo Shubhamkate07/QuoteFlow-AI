@@ -216,15 +216,28 @@ class QuotationViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Dispatch background document processing task immediately
+        # Dispatch background document processing task asynchronously (never block HTTP upload)
         if document:
             try:
-                task = process_document_task.delay(str(document.id))
-                document.task_id = task.id
-                document.save(update_fields=['task_id', 'updated_at'])
+                import threading
+                from django.db import connection
+
+                doc_id_str = str(document.id)
+
+                def _async_process_doc():
+                    connection.close()
+                    try:
+                        from quotations.tasks import process_document_task
+                        process_document_task(doc_id_str)
+                    except Exception as p_err:
+                        logger.error("Background document processing error for %s: %s", doc_id_str, p_err)
+                    finally:
+                        connection.close()
+
+                threading.Thread(target=_async_process_doc, daemon=True).start()
             except Exception as task_err:
                 logger.warning(
-                    "Celery task dispatch failed for document %s: %s",
+                    "Document processing thread dispatch failed for document %s: %s",
                     document.id,
                     task_err,
                 )
@@ -389,15 +402,28 @@ class QuotationDocumentViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Dispatch background document processing task immediately
+        # Dispatch background document processing task asynchronously (never block HTTP response)
         if document:
             try:
-                task = process_document_task.delay(str(document.id))
-                document.task_id = task.id
-                document.save(update_fields=['task_id', 'updated_at'])
+                import threading
+                from django.db import connection
+
+                doc_id_str = str(document.id)
+
+                def _async_process_doc():
+                    connection.close()
+                    try:
+                        from quotations.tasks import process_document_task
+                        process_document_task(doc_id_str)
+                    except Exception as p_err:
+                        logger.error("Background document processing error for %s: %s", doc_id_str, p_err)
+                    finally:
+                        connection.close()
+
+                threading.Thread(target=_async_process_doc, daemon=True).start()
             except Exception as task_err:
                 logger.warning(
-                    "Celery task dispatch failed for document %s: %s",
+                    "Document processing thread dispatch failed for document %s: %s",
                     document.id,
                     task_err,
                 )
