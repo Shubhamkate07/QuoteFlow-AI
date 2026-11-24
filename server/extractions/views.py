@@ -110,11 +110,11 @@ class QuotationExtractionViewSet(viewsets.ViewSet):
         """
         extraction = self._get_extraction_or_404(request, pk)
 
-        # Auto-heal stale extractions: if stuck in PROCESSING for > 45s, mark as FAILED so UI doesn't hang
+        # Auto-heal stale extractions: if stuck in PROCESSING for > 120s, mark as FAILED so UI doesn't hang
         if extraction.status == ExtractionStatus.PROCESSING:
             from django.utils import timezone
             from datetime import timedelta
-            if timezone.now() - extraction.updated_at > timedelta(seconds=45):
+            if timezone.now() - extraction.updated_at > timedelta(seconds=120):
                 extraction.status = ExtractionStatus.FAILED
                 extraction.error_message = (
                     "Extraction timed out or worker process was interrupted. Click 'Retry Extraction' to run extraction again."
@@ -153,48 +153,67 @@ class QuotationExtractionViewSet(viewsets.ViewSet):
         is_sync = (
             serializer.validated_data.get('sync', False)
             or request.query_params.get('sync') == 'true'
-            or getattr(settings, 'CELERY_TASK_ALWAYS_EAGER', False)
         )
         model_name = serializer.validated_data.get('model')
 
-        # Synchronous execution
-        if is_sync:
-            try:
-                extraction = QuotationExtractionService.extract_from_document(
-                    document=document,
-                    user=request.user,
-                    model_name=model_name,
-                )
-            except Exception as e:
-                logger.error("Synchronous AI extraction failed for document %s: %s", document.id, e)
-                return Response(
-                    {'detail': f"AI extraction failed: {str(e)}", 'document_id': str(document.id)},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
+        import threading
+        from django.db import connection
 
-            res_serializer = QuotationExtractionSerializer(extraction)
+        # Ensure or reuse an existing extraction record
+        existing_extraction = QuotationExtraction.objects.filter(
+            document=document,
+            status=ExtractionStatus.PROCESSING,
+        ).order_by('-created_at').first()
+
+        if not existing_extraction:
+            existing_extraction = QuotationExtraction.objects.create(
+                organization=org,
+                document=document,
+                quotation=document.quotation,
+                status=ExtractionStatus.PROCESSING,
+                model_name=model_name or 'gemini-3.5-flash',
+            )
+
+        extraction_id = str(existing_extraction.id)
+        current_user = request.user
+
+        def _run_extraction_in_thread():
+            connection.close()
+            try:
+                QuotationExtractionService.extract_from_document(
+                    document=document,
+                    user=current_user,
+                    model_name=model_name,
+                    existing_extraction_id=extraction_id,
+                )
+            except Exception as thread_err:
+                logger.exception("Background extraction failed for document %s: %s", document.id, thread_err)
+                try:
+                    QuotationExtraction.objects.filter(id=extraction_id).update(
+                        status=ExtractionStatus.FAILED,
+                        error_message=str(thread_err),
+                    )
+                except Exception:
+                    pass
+            finally:
+                connection.close()
+
+        worker_thread = threading.Thread(target=_run_extraction_in_thread, daemon=True)
+        worker_thread.start()
+
+        # If sync was requested, wait up to 18 seconds before returning 202 to beat Gunicorn 30s timeout
+        if is_sync:
+            worker_thread.join(timeout=18.0)
+
+        # Reload extraction state from DB
+        fresh_extraction = QuotationExtraction.objects.filter(id=extraction_id).first() or existing_extraction
+        res_serializer = QuotationExtractionSerializer(fresh_extraction)
+
+        if fresh_extraction.status == ExtractionStatus.COMPLETED:
             return Response(res_serializer.data, status=status.HTTP_200_OK)
 
-        # Asynchronous background execution (Default)
-        try:
-            async_task = run_ai_extraction_task.delay(str(document.id), str(request.user.id))
-            status_url = request.build_absolute_uri(f"/api/quotations/documents/{document.id}/task-status/")
-            return Response(
-                {
-                    'status': 'accepted',
-                    'message': 'AI quotation extraction queued in background.',
-                    'document_id': str(document.id),
-                    'task_id': async_task.id,
-                    'task_status_url': status_url,
-                },
-                status=status.HTTP_202_ACCEPTED,
-            )
-        except Exception as queue_err:
-            logger.error("Failed to enqueue AI extraction for document %s: %s", document.id, queue_err)
-            return Response(
-                {'detail': f"Failed to enqueue extraction task: {str(queue_err)}", 'document_id': str(document.id)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        # Still processing: return 202 ACCEPTED so client polls without Gunicorn timeout
+        return Response(res_serializer.data, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=True, methods=['patch', 'post'], url_path='correct')
     def correct(self, request, pk=None):

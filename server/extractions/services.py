@@ -47,6 +47,7 @@ class QuotationExtractionService:
         document: QuotationDocument,
         user=None,
         model_name: Optional[str] = None,
+        existing_extraction_id: Optional[str] = None,
     ) -> QuotationExtraction:
         """
         Extracts structured quotation data from an uploaded QuotationDocument:
@@ -93,17 +94,26 @@ class QuotationExtractionService:
             filename=document.original_filename,
         )
 
-        # 3. Create initial QuotationExtraction record
+        # 3. Create or reuse initial QuotationExtraction record
         ai_service = GeminiService()
         active_model = model_name or ai_service.config.model_name
 
-        extraction_record = QuotationExtraction.objects.create(
-            organization=org,
-            document=document,
-            quotation=document.quotation,
-            status=ExtractionStatus.PROCESSING,
-            model_name=active_model,
-        )
+        extraction_record = None
+        if existing_extraction_id:
+            extraction_record = QuotationExtraction.objects.filter(id=existing_extraction_id).first()
+            if extraction_record:
+                extraction_record.status = ExtractionStatus.PROCESSING
+                extraction_record.model_name = active_model
+                extraction_record.save(update_fields=['status', 'model_name', 'updated_at'])
+
+        if not extraction_record:
+            extraction_record = QuotationExtraction.objects.create(
+                organization=org,
+                document=document,
+                quotation=document.quotation,
+                status=ExtractionStatus.PROCESSING,
+                model_name=active_model,
+            )
 
         # 4. Invoke Gemini with structured JSON schema
         start_time = time.time()

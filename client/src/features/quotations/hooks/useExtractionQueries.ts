@@ -47,7 +47,14 @@ export function useExtractionsForQuotation(quotationId?: string) {
     queryKey: EXTRACTION_KEYS.list({ quotation: quotationId }),
     queryFn: () => extractionService.getExtractions({ quotation: quotationId }),
     enabled: Boolean(quotationId),
-    staleTime: 1000 * 30,
+    staleTime: 1000 * 5,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (Array.isArray(data) && data.some((e: any) => e.status === 'processing' || e.status === 'pending')) {
+        return 2000;
+      }
+      return false;
+    },
   });
 }
 

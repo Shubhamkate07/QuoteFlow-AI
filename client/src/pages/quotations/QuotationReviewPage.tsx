@@ -65,19 +65,28 @@ export const QuotationReviewPage: React.FC = () => {
   const quotation = quotationDetailQuery.data || (id ? getQuotationById(id) : undefined);
 
   // Queries: try by extraction ID first, fallback to quotation's extractions
-  const directExtractionQuery = useExtraction(id);
-  const quotationExtractionsQuery = useExtractionsForQuotation(id);
-
-  // Local state to store freshly extracted data immediately upon trigger
   const [localExtraction, setLocalExtraction] = useState<BackendQuotationExtraction | null>(null);
+  const directExtractionQuery = useExtraction(localExtraction?.id || id);
+  const quotationExtractionsQuery = useExtractionsForQuotation(quotation?.id || id);
 
   // Determine active extraction
   const extraction: BackendQuotationExtraction | undefined = useMemo(() => {
+    // 1. Check if direct query has completed data
+    if (directExtractionQuery.data && directExtractionQuery.data.status === 'completed') {
+      return directExtractionQuery.data;
+    }
+    // 2. Check if quotation's extractions list has completed data
+    const listMatch = quotationExtractionsQuery.data?.find(
+      (e) => (localExtraction && e.id === localExtraction.id) || e.status === 'completed'
+    ) || quotationExtractionsQuery.data?.[0];
+
+    if (listMatch && listMatch.status === 'completed') {
+      return listMatch;
+    }
+
     if (localExtraction) return localExtraction;
     if (directExtractionQuery.data) return directExtractionQuery.data;
-    if (quotationExtractionsQuery.data && quotationExtractionsQuery.data.length > 0) {
-      return quotationExtractionsQuery.data[0];
-    }
+    if (listMatch) return listMatch;
     return undefined;
   }, [localExtraction, directExtractionQuery.data, quotationExtractionsQuery.data]);
 
