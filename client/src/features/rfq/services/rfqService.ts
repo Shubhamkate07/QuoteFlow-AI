@@ -52,7 +52,7 @@ export const rfqService = {
     let isFirst = true;
 
     while (nextUrl) {
-      const response = await api.get<any>(nextUrl, {
+      const response: { data: any } = await api.get<any>(nextUrl, {
         params: isFirst ? cleanParams : undefined,
       });
       isFirst = false;

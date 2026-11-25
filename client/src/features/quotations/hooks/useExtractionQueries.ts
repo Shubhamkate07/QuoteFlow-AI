@@ -123,7 +123,7 @@ export function useApproveExtraction() {
     onSuccess: (res, variables) => {
       queryClient.setQueryData(EXTRACTION_KEYS.detail(variables.id), res.extraction);
       queryClient.invalidateQueries({ queryKey: EXTRACTION_KEYS.all });
-      invalidateAllQuotationData(queryClient, res.extraction?.quotation_id);
+      invalidateAllQuotationData(queryClient, res.extraction?.quotation_id ?? undefined);
     },
   });
 }

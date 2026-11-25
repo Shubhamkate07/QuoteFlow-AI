@@ -8,7 +8,6 @@ import {
 import { quotationService } from '../services/quotationService';
 import type {
   Quotation,
-  QuotationDocument,
   UploadQuotationPayload,
 } from '../types';
 
@@ -142,7 +141,6 @@ export function useDeleteDocument() {
   return useMutation({
     mutationFn: ({
       documentId,
-      quotationId,
     }: {
       documentId: string;
       quotationId?: string;

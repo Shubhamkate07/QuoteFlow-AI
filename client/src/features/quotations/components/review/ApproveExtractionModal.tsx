@@ -31,7 +31,7 @@ export const ApproveExtractionModal: React.FC<ApproveExtractionModalProps> = ({
 }) => {
   const [reviewNotes, setReviewNotes] = useState<string>('');
   const [applyToQuotation, setApplyToQuotation] = useState<boolean>(true);
-  const [replaceItems, setReplaceItems] = useState<boolean>(true);
+  const [replaceItems] = useState<boolean>(true);
 
   const errorFlags = (extraction.validation_flags || []).filter((f) => f.severity === 'ERROR');
   const warningFlags = (extraction.validation_flags || []).filter((f) => f.severity === 'WARNING');

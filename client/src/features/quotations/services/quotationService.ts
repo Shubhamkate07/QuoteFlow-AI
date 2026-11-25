@@ -25,7 +25,7 @@ export const quotationService = {
     let isFirst = true;
 
     while (nextUrl) {
-      const response = await api.get<BackendQuotation[] | PaginatedResponse<BackendQuotation>>(nextUrl, {
+      const response: { data: BackendQuotation[] | PaginatedResponse<BackendQuotation> } = await api.get<BackendQuotation[] | PaginatedResponse<BackendQuotation>>(nextUrl, {
         params: isFirst ? cleanParams : undefined,
       });
       isFirst = false;
@@ -52,7 +52,7 @@ export const quotationService = {
     let nextUrl: string | null = `/quotations/rfq/${rfqId}/`;
 
     while (nextUrl) {
-      const response = await api.get<BackendQuotation[] | PaginatedResponse<BackendQuotation>>(nextUrl);
+      const response: { data: BackendQuotation[] | PaginatedResponse<BackendQuotation> } = await api.get<BackendQuotation[] | PaginatedResponse<BackendQuotation>>(nextUrl);
       if (Array.isArray(response.data)) {
         allResults = response.data;
         break;

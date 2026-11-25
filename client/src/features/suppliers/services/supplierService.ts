@@ -44,7 +44,7 @@ export const supplierService = {
     let isFirst = true;
 
     while (nextUrl) {
-      const response = await api.get<PaginatedResponse<BackendSupplier>>(nextUrl, {
+      const response: { data: any } = await api.get<PaginatedResponse<BackendSupplier>>(nextUrl, {
         params: isFirst ? cleanParams : undefined,
       });
       isFirst = false;
