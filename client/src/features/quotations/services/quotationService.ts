@@ -1,4 +1,4 @@
-import api from '../../../lib/api';
+import api, { toRelativeApiPath } from '../../../lib/api';
 import type { PaginatedResponse } from '../../../types/api';
 import type {
   Quotation,
@@ -12,6 +12,7 @@ import { adaptBackendQuotation, adaptBackendDocument } from '../types';
 export const quotationService = {
   /**
    * Fetches quotations list from backend with optional filters.
+   * Automatically traverses all pages via 'next' pagination links to collect all records.
    */
   getQuotations: async (params?: { rfq?: string; supplier?: string; search?: string }): Promise<Quotation[]> => {
     const cleanParams: Record<string, string> = {};
@@ -19,21 +20,51 @@ export const quotationService = {
     if (params?.supplier) cleanParams.supplier = params.supplier;
     if (params?.search) cleanParams.search = params.search;
 
-    const response = await api.get<BackendQuotation[] | PaginatedResponse<BackendQuotation>>('/quotations/', {
-      params: cleanParams,
-    });
+    let allResults: BackendQuotation[] = [];
+    let nextUrl: string | null = '/quotations/';
+    let isFirst = true;
 
-    const results = Array.isArray(response.data) ? response.data : (response.data.results || []);
-    return results.map(adaptBackendQuotation);
+    while (nextUrl) {
+      const response = await api.get<BackendQuotation[] | PaginatedResponse<BackendQuotation>>(nextUrl, {
+        params: isFirst ? cleanParams : undefined,
+      });
+      isFirst = false;
+
+      if (Array.isArray(response.data)) {
+        allResults = response.data;
+        break;
+      } else if (response.data && Array.isArray(response.data.results)) {
+        allResults = allResults.concat(response.data.results);
+        nextUrl = response.data.next ? toRelativeApiPath(response.data.next) : null;
+      } else {
+        break;
+      }
+    }
+
+    return allResults.map(adaptBackendQuotation);
   },
 
   /**
-   * Fetches quotations associated with a specific RFQ.
+   * Fetches quotations associated with a specific RFQ, traversing all pages.
    */
   getQuotationsByRfq: async (rfqId: string): Promise<Quotation[]> => {
-    const response = await api.get<BackendQuotation[] | PaginatedResponse<BackendQuotation>>(`/quotations/rfq/${rfqId}/`);
-    const results = Array.isArray(response.data) ? response.data : (response.data.results || []);
-    return results.map(adaptBackendQuotation);
+    let allResults: BackendQuotation[] = [];
+    let nextUrl: string | null = `/quotations/rfq/${rfqId}/`;
+
+    while (nextUrl) {
+      const response = await api.get<BackendQuotation[] | PaginatedResponse<BackendQuotation>>(nextUrl);
+      if (Array.isArray(response.data)) {
+        allResults = response.data;
+        break;
+      } else if (response.data && Array.isArray(response.data.results)) {
+        allResults = allResults.concat(response.data.results);
+        nextUrl = response.data.next ? toRelativeApiPath(response.data.next) : null;
+      } else {
+        break;
+      }
+    }
+
+    return allResults.map(adaptBackendQuotation);
   },
 
   /**
@@ -67,6 +98,7 @@ export const quotationService = {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+      timeout: 120000,
       onUploadProgress: (progressEvent) => {
         if (progressEvent.total && onProgress) {
           const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -93,6 +125,7 @@ export const quotationService = {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+      timeout: 120000,
       onUploadProgress: (progressEvent) => {
         if (progressEvent.total && onProgress) {
           const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);

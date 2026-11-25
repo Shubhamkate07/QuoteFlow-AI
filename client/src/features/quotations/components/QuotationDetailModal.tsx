@@ -7,7 +7,9 @@ import { QuotationStatusBadge } from './QuotationStatusBadge';
 import type { Quotation, QuotationDocument } from '../types';
 import { quotationService } from '../services/quotationService';
 import { useQuotation } from '../context/QuotationContext';
+import { useTriggerExtraction } from '../hooks/useExtractionQueries';
 import { formatCurrency, formatDate } from '../../../utils/formatters';
+import { getErrorMessage } from '../../../lib/api';
 import { ROUTES } from '../../../routes/paths';
 import {
   FileText,
@@ -30,6 +32,7 @@ import {
   Paperclip,
   CheckCircle2,
   Clock,
+  RotateCw,
 } from 'lucide-react';
 
 interface QuotationDetailModalProps {
@@ -46,10 +49,25 @@ export const QuotationDetailModal: React.FC<QuotationDetailModalProps> = ({
   onReplaceDocument,
 }) => {
   const { deleteDocument } = useQuotation();
+  const triggerExtractionMutation = useTriggerExtraction();
   const [activeTab, setActiveTab] = useState<'documents' | 'line_items' | 'commercial_terms'>('documents');
   const [downloadingDocId, setDownloadingDocId] = useState<string | null>(null);
   const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
+  const [retryingDocId, setRetryingDocId] = useState<string | null>(null);
   const [docActionError, setDocActionError] = useState<string | null>(null);
+
+  const handleRetryDocExtraction = async (docId: string) => {
+    try {
+      setDocActionError(null);
+      setRetryingDocId(docId);
+      await triggerExtractionMutation.mutateAsync({ documentId: docId, sync: false });
+    } catch (err: unknown) {
+      const message = getErrorMessage(err, 'Failed to retry extraction');
+      setDocActionError(message);
+    } finally {
+      setRetryingDocId(null);
+    }
+  };
 
   if (!quotation) return null;
 
@@ -111,8 +129,8 @@ export const QuotationDetailModal: React.FC<QuotationDetailModalProps> = ({
             message = `HTTP ${axiosErr.response?.status || 500} error downloading document`;
           }
         }
-      } else if (err instanceof Error) {
-        message = err.message;
+      } else {
+        message = getErrorMessage(err, message);
       }
       setDocActionError(`Download error: ${message}`);
     } finally {
@@ -129,7 +147,7 @@ export const QuotationDetailModal: React.FC<QuotationDetailModalProps> = ({
       setDeletingDocId(docId);
       await deleteDocument(docId, quotation.id);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to delete document';
+      const message = getErrorMessage(err, 'Failed to delete document');
       setDocActionError(`Delete error: ${message}`);
     } finally {
       setDeletingDocId(null);
@@ -266,14 +284,28 @@ export const QuotationDetailModal: React.FC<QuotationDetailModalProps> = ({
         )}
 
         {quotation.status === 'failed' && (
-          <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-lg flex items-start gap-2.5 text-xs text-rose-900">
-            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-            <div>
-              <span className="font-semibold">Document Ingestion Failed</span>
-              <p className="mt-0.5 text-rose-800 leading-relaxed">
-                {quotation.processingError || 'The uploaded file could not be parsed. Click "Replace Document" to upload a cleaner file or higher-resolution scan.'}
-              </p>
+          <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-rose-900">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-semibold">Document Ingestion Failed</span>
+                <p className="mt-0.5 text-rose-800 leading-relaxed">
+                  {quotation.processingError || 'The uploaded file could not be parsed. Click "Retry Extraction" or "Replace Document" to try again.'}
+                </p>
+              </div>
             </div>
+            {documents[0] && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleRetryDocExtraction(documents[0].id)}
+                disabled={retryingDocId === documents[0].id}
+                leftIcon={<RotateCw className={`w-3.5 h-3.5 text-rose-600 ${retryingDocId === documents[0].id ? 'animate-spin' : ''}`} />}
+                className="shrink-0 text-rose-700 border-rose-300 hover:bg-rose-100"
+              >
+                {retryingDocId === documents[0].id ? 'Retrying...' : 'Retry Extraction'}
+              </Button>
+            )}
           </div>
         )}
 
@@ -372,6 +404,27 @@ export const QuotationDetailModal: React.FC<QuotationDetailModalProps> = ({
 
                       <div className="flex items-center space-x-2 shrink-0 self-end sm:self-center">
                         {getDocStatusBadge(doc.processingStatus)}
+
+                        {/* Retry Extraction Button for Failed Documents */}
+                        {doc.processingStatus === 'failed' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleRetryDocExtraction(doc.id)}
+                            disabled={isDownloading || isDeleting || retryingDocId === doc.id}
+                            leftIcon={
+                              <RotateCw
+                                className={`w-3.5 h-3.5 text-amber-600 ${
+                                  retryingDocId === doc.id ? 'animate-spin' : ''
+                                }`}
+                              />
+                            }
+                            className="border-amber-300 text-amber-700 hover:bg-amber-50"
+                            title="Retry document text and AI extraction"
+                          >
+                            {retryingDocId === doc.id ? 'Retrying...' : 'Retry'}
+                          </Button>
+                        )}
 
                         {/* View Inline Button */}
                         <Button

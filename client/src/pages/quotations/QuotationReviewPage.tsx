@@ -14,7 +14,9 @@ import { ApproveExtractionModal } from '../../features/quotations/components/rev
 import { AuditHistoryModal } from '../../features/quotations/components/review/AuditHistoryModal';
 import { DeleteQuotationModal } from '../../features/quotations/components/DeleteQuotationModal';
 import { useQuotation } from '../../features/quotations/context/QuotationContext';
+import { useAuth } from '../../features/auth/context/AuthContext';
 import { quotationService } from '../../features/quotations/services/quotationService';
+import { getErrorMessage } from '../../lib/api';
 import {
   useExtraction,
   useExtractionsForQuotation,
@@ -105,6 +107,15 @@ export const QuotationReviewPage: React.FC = () => {
   const [lineItems, setLineItems] = useState<ExtractedLineItemData[]>([]);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState<boolean>(false);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
+  const [saveWarningMessage, setSaveWarningMessage] = useState<string | null>(null);
+  const [actionErrorMessage, setActionErrorMessage] = useState<string | null>(null);
+  const [approveError, setApproveError] = useState<string | null>(null);
+
+  // User RBAC permissions for review and approve actions
+  const { activeOrganization } = useAuth();
+  const userRole = activeOrganization?.role;
+  const canApprove = userRole === 'owner' || userRole === 'admin' || userRole === 'procurement_manager';
+  const canReject = userRole === 'owner' || userRole === 'admin' || userRole === 'procurement_manager' || userRole === 'procurement_user';
 
   // Evidence Citation highlighting & Document Viewer coordination
   const [selectedEvidenceSnippet, setSelectedEvidenceSnippet] = useState<{
@@ -244,11 +255,12 @@ export const QuotationReviewPage: React.FC = () => {
     }
   };
 
-  // Approve extraction and apply to official quotation
+  // Approve extraction and apply to official quotation atomically
   const handleApproveConfirm = async (payload: { review_notes?: string; apply_to_quotation?: boolean }) => {
     if (!extraction) return;
 
     try {
+      setApproveError(null);
       await approveExtractionMutation.mutateAsync({
         id: extraction.id,
         payload,
@@ -257,26 +269,37 @@ export const QuotationReviewPage: React.FC = () => {
       setIsApproveModalOpen(false);
       setSaveSuccessMessage('Quotation approved successfully and verified status recorded.');
       setTimeout(() => setSaveSuccessMessage(null), 4000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to approve extraction:', err);
+      const errorMsg = getErrorMessage(err, 'Failed to approve extraction. Please verify your permissions.');
+      setApproveError(errorMsg);
     }
   };
 
   // Reject extraction
   const handleReject = async () => {
     if (!extraction) return;
+    if (!canReject) {
+      setActionErrorMessage('You do not have permission to reject quotation extractions.');
+      setTimeout(() => setActionErrorMessage(null), 5000);
+      return;
+    }
     const reason = window.prompt('Please enter the reason for rejecting this extraction:');
     if (!reason || !reason.trim()) return;
 
     try {
+      setActionErrorMessage(null);
       await rejectExtractionMutation.mutateAsync({
         id: extraction.id,
         reason: reason.trim(),
       });
       setSaveSuccessMessage('Extraction rejected and marked for reprocessing.');
       setTimeout(() => setSaveSuccessMessage(null), 4000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to reject extraction:', err);
+      const errorMsg = getErrorMessage(err, 'Failed to reject extraction.');
+      setActionErrorMessage(errorMsg);
+      setTimeout(() => setActionErrorMessage(null), 6000);
     }
   };
 
@@ -699,19 +722,33 @@ export const QuotationReviewPage: React.FC = () => {
                   variant="outline"
                   size="sm"
                   onClick={handleReject}
-                  disabled={rejectExtractionMutation.isPending}
+                  disabled={rejectExtractionMutation.isPending || !canReject}
+                  title={!canReject ? 'You do not have permission to reject quotation extractions.' : undefined}
                   leftIcon={<XCircle className="w-3.5 h-3.5 text-rose-500" />}
-                  className="text-xs text-rose-700 hover:bg-rose-50 border-rose-200"
+                  className={`text-xs ${
+                    canReject
+                      ? 'text-rose-700 hover:bg-rose-50 border-rose-200'
+                      : 'opacity-50 cursor-not-allowed text-slate-400 border-slate-200'
+                  }`}
                 >
                   Reject
                 </Button>
                 <Button
                   variant="primary"
                   size="sm"
-                  onClick={() => setIsApproveModalOpen(true)}
-                  disabled={approveExtractionMutation.isPending}
+                  onClick={() => {
+                    if (!canApprove) return;
+                    setApproveError(null);
+                    setIsApproveModalOpen(true);
+                  }}
+                  disabled={approveExtractionMutation.isPending || !canApprove}
+                  title={!canApprove ? 'Only procurement managers or administrators can approve quotation extractions.' : undefined}
                   leftIcon={<ShieldCheck className="w-3.5 h-3.5" />}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs focus:ring-emerald-500"
+                  className={`text-xs ${
+                    canApprove
+                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white focus:ring-emerald-500'
+                      : 'opacity-50 cursor-not-allowed bg-slate-300 text-slate-500 hover:bg-slate-300'
+                  }`}
                 >
                   Approve Extraction
                 </Button>
@@ -736,6 +773,40 @@ export const QuotationReviewPage: React.FC = () => {
               type="button"
               onClick={() => setSaveSuccessMessage(null)}
               className="text-emerald-600 hover:text-emerald-800 font-bold"
+            >
+              ×
+            </button>
+          </div>
+        )}
+
+        {/* Warning Alert Banner (Issue 10) */}
+        {saveWarningMessage && (
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between text-xs text-amber-800 animate-in fade-in">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>{saveWarningMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSaveWarningMessage(null)}
+              className="text-amber-600 hover:text-amber-800 font-bold"
+            >
+              ×
+            </button>
+          </div>
+        )}
+
+        {/* Action Error Alert Banner (Issue 9) */}
+        {actionErrorMessage && (
+          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center justify-between text-xs text-rose-800 animate-in fade-in">
+            <div className="flex items-center gap-2">
+              <XCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{actionErrorMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActionErrorMessage(null)}
+              className="text-rose-600 hover:text-rose-800 font-bold"
             >
               ×
             </button>
@@ -893,10 +964,19 @@ export const QuotationReviewPage: React.FC = () => {
                   <Button
                     variant="primary"
                     size="sm"
-                    onClick={() => setIsApproveModalOpen(true)}
-                    disabled={approveExtractionMutation.isPending}
+                    onClick={() => {
+                      if (!canApprove) return;
+                      setApproveError(null);
+                      setIsApproveModalOpen(true);
+                    }}
+                    disabled={approveExtractionMutation.isPending || !canApprove}
+                    title={!canApprove ? 'Only procurement managers or administrators can approve quotation extractions.' : undefined}
                     leftIcon={<ShieldCheck className="w-3.5 h-3.5" />}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs"
+                    className={`text-xs ${
+                      canApprove
+                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                        : 'opacity-50 cursor-not-allowed bg-slate-300 text-slate-500 hover:bg-slate-300'
+                    }`}
                   >
                     Approve
                   </Button>
@@ -936,10 +1016,15 @@ export const QuotationReviewPage: React.FC = () => {
       {isApproveModalOpen && (
         <ApproveExtractionModal
           isOpen={isApproveModalOpen}
-          onClose={() => setIsApproveModalOpen(false)}
+          onClose={() => {
+            setIsApproveModalOpen(false);
+            setApproveError(null);
+          }}
           extraction={extraction}
+          existingItemCount={quotation?.extractedItems?.length}
           onConfirmApprove={handleApproveConfirm}
           isApproving={approveExtractionMutation.isPending}
+          error={approveError}
         />
       )}
 

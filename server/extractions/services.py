@@ -250,8 +250,10 @@ class QuotationExtractionService:
 
         # 2. Synchronize Line Items (uses current working data, reflecting human edits)
         raw_items = extraction.extracted_data.get('line_items', [])
+        # Safeguard: never delete items when extraction has zero line items
         if replace_items and raw_items:
-            quotation.items.all().delete()
+            # Only replace line items originally created from extraction, preserving manual entries
+            quotation.items.filter(source=QuotationItem.ItemSource.EXTRACTION).delete()
 
         for idx, item_data in enumerate(raw_items, start=1):
             desc = (item_data.get('description') or f"Line Item #{idx}").strip()
@@ -284,6 +286,7 @@ class QuotationExtractionService:
                 tax=max(Decimal('0.00'), tax),
                 specifications=specs_dict,
                 notes=item_data.get('source_text') or '',
+                source=QuotationItem.ItemSource.EXTRACTION,
             )
 
         # 3. Recalculate quotation subtotal and grand totals from line items

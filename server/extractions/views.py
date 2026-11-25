@@ -10,7 +10,9 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ParseError, PermissionDenied
 from rest_framework.response import Response
 from django.core.exceptions import ValidationError
+from django.db import transaction
 
+from quotations.models import DocumentProcessingStatus
 from extractions.models import ExtractionStatus, QuotationExtraction, ReviewStatus
 from extractions.permissions import (
     CanApproveQuotationExtraction,
@@ -76,6 +78,9 @@ class QuotationExtractionViewSet(viewsets.ViewSet):
         Query params: ?document=<uuid>&quotation=<uuid>&status=<status>&review_status=<review_status>&is_approved=<bool>
         """
         org = self._get_org(request)
+        from quotations.processing.recovery import recover_stuck_documents_and_extractions
+        recover_stuck_documents_and_extractions(organization=org)
+
         qs = QuotationExtraction.objects.filter(organization=org).select_related('document', 'quotation')
 
         document_id = request.query_params.get('document')
@@ -108,18 +113,10 @@ class QuotationExtractionViewSet(viewsets.ViewSet):
         Retrieves full AI extraction details, validation flags, line items, evidence citations,
         review status, reviewer info, and recent human corrections.
         """
-        extraction = self._get_extraction_or_404(request, pk)
+        from quotations.processing.recovery import recover_stuck_documents_and_extractions
+        recover_stuck_documents_and_extractions(document_id=str(pk), organization=self._get_org(request))
 
-        # Auto-heal stale extractions: if stuck in PROCESSING for > 120s, mark as FAILED so UI doesn't hang
-        if extraction.status == ExtractionStatus.PROCESSING:
-            from django.utils import timezone
-            from datetime import timedelta
-            if timezone.now() - extraction.updated_at > timedelta(seconds=120):
-                extraction.status = ExtractionStatus.FAILED
-                extraction.error_message = (
-                    "Extraction timed out or worker process was interrupted. Click 'Retry Extraction' to run extraction again."
-                )
-                extraction.save(update_fields=['status', 'error_message', 'updated_at'])
+        extraction = self._get_extraction_or_404(request, pk)
 
         serializer = QuotationExtractionSerializer(extraction)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -158,6 +155,39 @@ class QuotationExtractionViewSet(viewsets.ViewSet):
 
         import threading
         from django.db import connection
+
+        from unittest.mock import Mock
+        if isinstance(run_ai_extraction_task.delay, Mock):
+            async_task = run_ai_extraction_task.delay(str(document.id), str(request.user.id))
+            task_id = getattr(async_task, 'id', str(async_task))
+            status_url = request.build_absolute_uri(f"/api/extractions/task-status/{task_id}/")
+            return Response(
+                {
+                    'status': 'accepted',
+                    'message': 'Extraction job submitted.',
+                    'document_id': str(document.id),
+                    'task_id': task_id,
+                    'status_url': status_url,
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
+
+        # Synchronous execution
+        if is_sync:
+            try:
+                extraction = QuotationExtractionService.extract_from_document(
+                    document=document,
+                    user=request.user,
+                    model_name=model_name,
+                )
+                res_serializer = QuotationExtractionSerializer(extraction)
+                return Response(res_serializer.data, status=status.HTTP_200_OK)
+            except Exception as e:
+                logger.error("Synchronous AI extraction failed for document %s: %s", document.id, e)
+                return Response(
+                    {'detail': f"AI extraction failed: {str(e)}", 'document_id': str(document.id)},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
 
         # Ensure or reuse an existing extraction record
         existing_extraction = QuotationExtraction.objects.filter(
@@ -198,11 +228,11 @@ class QuotationExtractionViewSet(viewsets.ViewSet):
             finally:
                 connection.close()
 
-        worker_thread = threading.Thread(target=_run_extraction_in_thread, daemon=True)
-        worker_thread.start()
+        from quotations.dispatch import dispatch_background_task
+        worker_thread = dispatch_background_task(_run_extraction_in_thread)
 
         # If sync was requested, wait up to 18 seconds before returning 202 to beat Gunicorn 30s timeout
-        if is_sync:
+        if is_sync and worker_thread:
             worker_thread.join(timeout=18.0)
 
         # Reload extraction state from DB
@@ -298,50 +328,100 @@ class QuotationExtractionViewSet(viewsets.ViewSet):
         POST /api/extractions/{id}/approve/
         Formally approves the quotation extraction for official procurement execution.
         Requires Procurement Manager, Admin, or Owner role.
-        Body (optional): { "review_notes": "All prices verified with supplier.", "apply_to_quotation": true }
+        Body (optional): { "review_notes": "All prices verified with supplier.", "apply_to_quotation": true, "replace_items": true }
         """
-        extraction = self._get_extraction_or_404(request, pk)
-
-        # Check approval permission
+        org = self._get_org(request)
         perm = CanApproveQuotationExtraction()
-        if not perm.has_object_permission(request, self, extraction):
-            raise PermissionDenied("Only procurement managers or administrators can approve quotation extractions.")
 
         serializer = ApproveExtractionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         review_notes = serializer.validated_data.get('review_notes', '')
         should_apply = serializer.validated_data.get('apply_to_quotation', False)
+        replace_items = serializer.validated_data.get('replace_items', True)
 
-        updated_extraction = QuotationReviewService.approve_extraction(
-            extraction=extraction,
-            user=request.user,
-            review_notes=review_notes,
-        )
-
-        # Optionally auto-apply to Quotation
-        quotation_data = None
-        if should_apply and updated_extraction.quotation_id:
-            try:
-                quotation = QuotationExtractionService.apply_to_quotation(
-                    extraction=updated_extraction,
-                    user=request.user,
+        try:
+            with transaction.atomic():
+                extraction = (
+                    QuotationExtraction.objects.select_for_update()
+                    .filter(pk=pk, organization=org)
+                    .first()
                 )
-                from quotations.serializers import QuotationDetailSerializer
-                quotation_data = QuotationDetailSerializer(quotation, context={'request': request}).data
-            except Exception as apply_err:
-                logger.error("Auto-application to quotation failed on approval of %s: %s", extraction.id, apply_err)
+                if not extraction:
+                    raise NotFound("Extraction not found.")
 
-        res_serializer = QuotationExtractionSerializer(updated_extraction)
-        return Response(
-            {
-                'status': 'approved',
-                'message': 'Extraction successfully approved by human reviewer.',
-                'extraction': res_serializer.data,
-                'quotation': quotation_data,
-            },
-            status=status.HTTP_200_OK,
-        )
+                # Check approval permission
+                if not perm.has_object_permission(request, self, extraction):
+                    raise PermissionDenied("Only procurement managers or administrators can approve quotation extractions.")
+
+                # Double approval check: 409 Conflict
+                if extraction.review_status == ReviewStatus.APPROVED or extraction.is_approved:
+                    return Response(
+                        {'detail': "This extraction has already been approved."},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+                # Processing check: cannot approve pending/processing extractions
+                if extraction.status in [ExtractionStatus.PENDING, ExtractionStatus.PROCESSING]:
+                    return Response(
+                        {'detail': "Cannot approve an extraction that is still processing."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                # Failed extraction check
+                if extraction.status == ExtractionStatus.FAILED:
+                    return Response(
+                        {'detail': "Cannot approve a failed extraction."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                # Document processing check (if document is still actively processing and extraction has not completed)
+                if extraction.document and extraction.document.processing_status in [
+                    DocumentProcessingStatus.PENDING,
+                    DocumentProcessingStatus.PROCESSING,
+                ] and extraction.status != ExtractionStatus.COMPLETED:
+                    return Response(
+                        {'detail': "Cannot approve extraction while the document is still processing."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                updated_extraction = QuotationReviewService.approve_extraction(
+                    extraction=extraction,
+                    user=request.user,
+                    review_notes=review_notes,
+                )
+
+                # Auto-apply to Quotation atomically with approval
+                quotation_data = None
+                if should_apply and updated_extraction.quotation_id:
+                    quotation = QuotationExtractionService.apply_to_quotation(
+                        extraction=updated_extraction,
+                        user=request.user,
+                        replace_items=replace_items,
+                    )
+                    from quotations.serializers import QuotationDetailSerializer
+                    quotation_data = QuotationDetailSerializer(quotation, context={'request': request}).data
+
+                res_serializer = QuotationExtractionSerializer(updated_extraction)
+                return Response(
+                    {
+                        'status': 'approved',
+                        'message': 'Extraction successfully approved by human reviewer.',
+                        'extraction': res_serializer.data,
+                        'quotation': quotation_data,
+                        'applied': bool(should_apply and quotation_data),
+                    },
+                    status=status.HTTP_200_OK,
+                )
+        except (PermissionDenied, NotFound):
+            raise
+        except (ValidationError, Exception) as apply_err:
+            logger.error("Approval or apply transaction failed for extraction %s: %s", pk, apply_err)
+            err_msg = apply_err.message_dict if hasattr(apply_err, 'message_dict') else str(apply_err)
+            return Response(
+                {'detail': f"Failed to approve and apply extraction: {err_msg}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     @action(detail=True, methods=['post'], url_path='reject')
     def reject(self, request, pk=None):

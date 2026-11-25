@@ -37,19 +37,25 @@ def run_ai_extraction_task(self, document_id: str, user_id: str = None) -> dict:
     try:
         document = QuotationDocument.objects.select_related('organization', 'quotation').get(id=document_id)
     except QuotationDocument.DoesNotExist:
-        logger.error("[AIExtractionTask %s] Document #%s does not exist. Aborting.", task_id, document_id)
-        return {'status': 'error', 'message': f'Document #{document_id} not found.'}
+        logger.info("[AIExtractionTask %s] Document #%s not found or deleted. Exiting quietly.", task_id, document_id)
+        return {'status': 'aborted', 'message': f'Document #{document_id} not found or deleted.'}
 
     # Record task_id on document
-    document.task_id = task_id
-    document.processing_status = DocumentProcessingStatus.PROCESSING
-    document.processing_progress = 30
-    document.save(update_fields=['task_id', 'processing_status', 'processing_progress', 'updated_at'])
+    if not QuotationDocument.objects.filter(id=document_id).exists():
+        return {'status': 'aborted', 'message': f'Document #{document_id} was deleted.'}
+
+    QuotationDocument.objects.filter(id=document_id).update(
+        task_id=task_id,
+        processing_status=DocumentProcessingStatus.PROCESSING,
+        processing_progress=30,
+    )
 
     try:
         extraction = QuotationExtractionService.extract_from_document(document)
-        extraction.task_id = task_id
-        extraction.save(update_fields=['task_id', 'updated_at'])
+        if not QuotationExtraction.objects.filter(id=extraction.id).exists():
+            return {'status': 'aborted', 'message': 'Extraction was deleted.'}
+
+        QuotationExtraction.objects.filter(id=extraction.id).update(task_id=task_id)
 
         if extraction.status == ExtractionStatus.FAILED:
             return {
@@ -80,9 +86,11 @@ def run_ai_extraction_task(self, document_id: str, user_id: str = None) -> dict:
     except (GeminiConfigurationError, GeminiAuthenticationError) as non_retryable:
         error_msg = str(non_retryable)
         logger.error("[AIExtractionTask %s] Non-retryable AI error on Document #%s: %s", task_id, document_id, error_msg)
-        document.processing_status = DocumentProcessingStatus.FAILED
-        document.processing_error = error_msg
-        document.save(update_fields=['processing_status', 'processing_error', 'updated_at'])
+        if QuotationDocument.objects.filter(id=document_id).exists():
+            QuotationDocument.objects.filter(id=document_id).update(
+                processing_status=DocumentProcessingStatus.FAILED,
+                processing_error=error_msg,
+            )
         return {'status': 'failed', 'retryable': False, 'error': error_msg}
 
     except (OperationalError, DatabaseError) as db_err:
@@ -93,7 +101,9 @@ def run_ai_extraction_task(self, document_id: str, user_id: str = None) -> dict:
     except Exception as exc:
         error_msg = f"Extraction failed: {str(exc)}"
         logger.error("[AIExtractionTask %s] Unexpected failure on Document #%s: %s", task_id, document_id, error_msg)
-        document.processing_status = DocumentProcessingStatus.FAILED
-        document.processing_error = error_msg
-        document.save(update_fields=['processing_status', 'processing_error', 'updated_at'])
+        if QuotationDocument.objects.filter(id=document_id).exists():
+            QuotationDocument.objects.filter(id=document_id).update(
+                processing_status=DocumentProcessingStatus.FAILED,
+                processing_error=error_msg,
+            )
         return {'status': 'failed', 'retryable': False, 'error': error_msg}

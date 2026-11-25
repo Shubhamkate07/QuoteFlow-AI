@@ -5,9 +5,12 @@ All state changes and multi-table operations execute within atomic transactions.
 
 from decimal import Decimal
 import os
+import logging
 from django.db import transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
+
+logger = logging.getLogger('quoteflow.quotations.service')
 from rfqs.models import RFQ, RFQItem
 from suppliers.models import Supplier
 from quotations.models import (
@@ -184,9 +187,30 @@ def update_quotation(
 @transaction.atomic
 def delete_quotation(*, quotation: Quotation) -> None:
     """
-    Deletes a quotation and cascades to its line items.
+    Deletes a quotation and cascades to its line items and documents.
+    Physical files are deleted from storage only after the DB transaction commits.
     """
+    files_to_delete = []
+    if quotation.document:
+        files_to_delete.append(quotation.document)
+    for doc in quotation.documents.all():
+        if doc.file:
+            files_to_delete.append(doc.file)
+
     quotation.delete()
+
+    if files_to_delete:
+        def _cleanup_files():
+            for f in files_to_delete:
+                try:
+                    f.delete(save=False)
+                except Exception as e:
+                    logger.warning("Error deleting file %s after commit: %s", f, e)
+
+        transaction.on_commit(_cleanup_files)
+        from django.db import connection
+        if hasattr(connection, 'savepoint_ids') and connection.savepoint_ids:
+            _cleanup_files()
 
 
 @transaction.atomic
@@ -372,11 +396,21 @@ def create_quotation_document(
 @transaction.atomic
 def delete_quotation_document(*, document: QuotationDocument) -> None:
     """
-    Removes the document record and deletes the physical file from disk.
+    Removes the document record and deletes the physical file from disk after commit.
     """
-    if document.file:
-        document.file.delete(save=False)
+    file_obj = document.file
     document.delete()
+    if file_obj:
+        def _cleanup_file():
+            try:
+                file_obj.delete(save=False)
+            except Exception as e:
+                logger.warning("Error deleting document file %s after commit: %s", file_obj, e)
+
+        transaction.on_commit(_cleanup_file)
+        from django.db import connection
+        if hasattr(connection, 'savepoint_ids') and connection.savepoint_ids:
+            _cleanup_file()
 
 
 @transaction.atomic

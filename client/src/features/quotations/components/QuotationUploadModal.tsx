@@ -5,6 +5,7 @@ import { Input } from '../../../components/ui/Input';
 import { Select } from '../../../components/ui/Select';
 import { useSuppliers } from '../../suppliers/context/SupplierContext';
 import { useQuotation } from '../context/QuotationContext';
+import { getErrorMessage } from '../../../lib/api';
 import type { RfqItem } from '../../rfq/types';
 import {
   UploadCloud,
@@ -179,8 +180,8 @@ export const QuotationUploadModal: React.FC<QuotationUploadModalProps> = ({
         }
       } else if (apiErr.response?.status) {
         message = `Server responded with status HTTP ${apiErr.response.status}. Please try again.`;
-      } else if (err instanceof Error) {
-        message = err.message;
+      } else {
+        message = getErrorMessage(err, message);
       }
       setError(message);
       setIsSubmitting(false);

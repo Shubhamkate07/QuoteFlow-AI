@@ -1,4 +1,5 @@
-import React, { createContext, useContext } from 'react';
+import React, { createContext, useContext, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import type { Supplier } from '../types';
 import type { SupplierFormValues } from '../schemas/supplierSchema';
 import {
@@ -6,8 +7,10 @@ import {
   useCreateSupplier,
   useUpdateSupplier,
   useDeleteSupplier,
+  SUPPLIER_KEYS,
 } from '../hooks/useSupplierQueries';
 import { supplierService } from '../services/supplierService';
+import { useAuth } from '../../auth/context/AuthContext';
 
 interface SupplierContextType {
   suppliers: Supplier[];
@@ -24,14 +27,28 @@ interface SupplierContextType {
 const SupplierContext = createContext<SupplierContextType | undefined>(undefined);
 
 export const SupplierProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Query for workspace-wide supplier list
-  const { data, isLoading, isError, refetch } = useSuppliersQuery();
+  const { isAuthenticated, activeOrganization } = useAuth();
+  const queryClient = useQueryClient();
+
+  // Query for workspace-wide supplier list only when authenticated
+  const { data, isLoading, isError, refetch } = useSuppliersQuery(undefined, {
+    enabled: isAuthenticated,
+  });
 
   const createSupplierMutation = useCreateSupplier();
   const updateSupplierMutation = useUpdateSupplier();
   const deleteSupplierMutation = useDeleteSupplier();
 
-  const suppliers = data?.results || [];
+  // Refetch when authenticated or active organization changes, and clear cache on logout
+  useEffect(() => {
+    if (isAuthenticated) {
+      refetch();
+    } else {
+      queryClient.removeQueries({ queryKey: SUPPLIER_KEYS.all });
+    }
+  }, [isAuthenticated, activeOrganization?.id, refetch, queryClient]);
+
+  const suppliers = isAuthenticated ? (data?.results || []) : [];
 
   const getSupplierById = (id: string): Supplier | undefined => {
     return suppliers.find((s) => s.id === id);
@@ -61,8 +78,8 @@ export const SupplierProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     <SupplierContext.Provider
       value={{
         suppliers,
-        isLoading,
-        isError,
+        isLoading: isAuthenticated ? isLoading : false,
+        isError: isAuthenticated ? isError : false,
         refetch,
         getSupplierById,
         fetchSupplierById,

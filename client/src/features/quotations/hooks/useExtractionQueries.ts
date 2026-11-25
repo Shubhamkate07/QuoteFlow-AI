@@ -4,6 +4,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import { extractionService } from '../services/extractionService';
+import { invalidateAllQuotationData } from './useQuotationQueries';
 import type {
   SaveCorrectionsPayload,
   ApproveExtractionPayload,
@@ -122,7 +123,7 @@ export function useApproveExtraction() {
     onSuccess: (res, variables) => {
       queryClient.setQueryData(EXTRACTION_KEYS.detail(variables.id), res.extraction);
       queryClient.invalidateQueries({ queryKey: EXTRACTION_KEYS.all });
-      queryClient.invalidateQueries({ queryKey: ['quotations'] });
+      invalidateAllQuotationData(queryClient, res.extraction?.quotation_id);
     },
   });
 }

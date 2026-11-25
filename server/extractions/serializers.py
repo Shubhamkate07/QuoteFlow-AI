@@ -165,6 +165,7 @@ class ApproveExtractionSerializer(serializers.Serializer):
     """Serializer for approving an AI extraction for official commercial execution."""
     review_notes = serializers.CharField(required=False, allow_blank=True, default="", help_text="Approval remarks or sign-off notes")
     apply_to_quotation = serializers.BooleanField(default=False, help_text="Synchronize approved data to Quotation immediately upon approval")
+    replace_items = serializers.BooleanField(default=True, help_text="Replace previously extracted line items on the quotation")
 
 
 class RejectExtractionSerializer(serializers.Serializer):

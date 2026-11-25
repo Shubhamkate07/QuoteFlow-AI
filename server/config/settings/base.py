@@ -164,7 +164,7 @@ AUTH_USER_MODEL = 'users.User'
 # Django REST Framework (DRF) Configuration
 # ==========================================
 REST_FRAMEWORK = {
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'DEFAULT_PAGINATION_CLASS': 'core.pagination.StandardResultsSetPagination',
     'PAGE_SIZE': int(os.getenv('DRF_PAGE_SIZE', '20')),
     'DEFAULT_PARSER_CLASSES': [
         'rest_framework.parsers.JSONParser',
@@ -215,6 +215,10 @@ CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv('CELERY_TASK_SOFT_TIME_LIMIT', 240))
 # If True, tasks execute synchronously in-process without requiring a running Redis daemon
 CELERY_TASK_ALWAYS_EAGER = get_env_bool('CELERY_TASK_ALWAYS_EAGER', default=False)
 CELERY_TASK_EAGER_PROPAGATES = True
+
+# Run dispatch_background_task inline (tests only; avoids SQLite lock contention)
+import sys as _sys
+BACKGROUND_TASKS_SYNC = get_env_bool('BACKGROUND_TASKS_SYNC', default=(len(_sys.argv) > 1 and _sys.argv[1] == 'test'))
 
 # ==========================================
 # Django REST Framework Simple JWT Configuration

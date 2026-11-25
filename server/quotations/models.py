@@ -245,11 +245,22 @@ class QuotationItem(BaseModel):
     Supports 1:1 RFQ mapping, substitute items, and auxiliary/additional items
     (such as tooling, packaging, testing, or unprompted accessories).
     """
+    class ItemSource(models.TextChoices):
+        MANUAL = 'manual', 'Manual Entry'
+        EXTRACTION = 'extraction', 'AI Extraction'
+
     quotation = models.ForeignKey(
         Quotation,
         on_delete=models.CASCADE,
         related_name='items',
         db_index=True,
+    )
+    source = models.CharField(
+        max_length=20,
+        choices=ItemSource.choices,
+        default=ItemSource.MANUAL,
+        db_index=True,
+        help_text="Origin of the line item (manual or AI extraction)",
     )
     rfq_item = models.ForeignKey(
         'rfqs.RFQItem',

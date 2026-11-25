@@ -19,12 +19,13 @@ export const SUPPLIER_KEYS = {
 /**
  * Query hook for paginated, searchable, filtered supplier directory
  */
-export function useSuppliers(params?: SupplierQueryParams) {
+export function useSuppliers(params?: SupplierQueryParams, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: SUPPLIER_KEYS.list(params),
     queryFn: () => supplierService.getSuppliers(params),
     placeholderData: keepPreviousData,
     staleTime: 1000 * 60 * 2, // 2 minutes
+    enabled: options?.enabled ?? true,
   });
 }
 

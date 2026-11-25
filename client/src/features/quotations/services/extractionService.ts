@@ -75,7 +75,14 @@ export const extractionService = {
   approveExtraction: async (
     id: string,
     payload?: ApproveExtractionPayload
-  ): Promise<{ status: string; message: string; extraction: BackendQuotationExtraction; quotation?: any }> => {
+  ): Promise<{
+    status: string;
+    message: string;
+    extraction: BackendQuotationExtraction;
+    quotation?: any;
+    applied?: boolean;
+    apply_error?: string;
+  }> => {
     const response = await api.post(`/extractions/${id}/approve/`, payload || {});
     return response.data;
   },

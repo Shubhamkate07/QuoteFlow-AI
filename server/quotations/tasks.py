@@ -7,6 +7,7 @@ retry strategies with exponential backoff, and robust error tracking.
 import logging
 from celery import shared_task
 from django.db import DatabaseError, OperationalError
+from django.utils import timezone
 
 from quotations.models import QuotationDocument, DocumentProcessingStatus
 from quotations.processing import (
@@ -53,8 +54,8 @@ def process_document_task(self, document_id: str) -> dict:
     try:
         document = QuotationDocument.objects.select_related('organization', 'quotation').get(id=document_id)
     except QuotationDocument.DoesNotExist:
-        logger.error(
-            "[DocumentTask %s] QuotationDocument #%s not found in database. Aborting task.",
+        logger.info(
+            "[DocumentTask %s] QuotationDocument #%s not found in database or already deleted. Exiting quietly.",
             task_id,
             document_id,
         )
@@ -67,12 +68,17 @@ def process_document_task(self, document_id: str) -> dict:
 
     # Ensure document has task_id stored
     if not document.task_id or document.task_id != task_id:
-        document.task_id = task_id
-        document.save(update_fields=['task_id', 'updated_at'])
+        if not QuotationDocument.objects.filter(id=document_id).exists():
+            return {'status': 'aborted', 'document_id': document_id, 'task_id': task_id}
+        QuotationDocument.objects.filter(id=document_id).update(task_id=task_id, updated_at=timezone.now())
 
     try:
         # Run extraction pipeline
         result = DocumentProcessingService.process_quotation_document(document, save=True)
+
+        if not QuotationDocument.objects.filter(id=document_id).exists():
+            logger.info("[DocumentTask %s] Document #%s deleted during processing. Exiting quietly.", task_id, document_id)
+            return {'status': 'aborted', 'document_id': document_id, 'task_id': task_id}
 
         logger.info(
             "[DocumentTask %s] Document #%s successfully processed: type=%s, units=%d, words=%d, ocr=%s, time=%.2fms",
@@ -87,23 +93,11 @@ def process_document_task(self, document_id: str) -> dict:
 
         # Automatically trigger Gemini AI extraction on the processed document asynchronously
         try:
-            import threading
-            from django.db import connection
             from extractions.tasks import run_ai_extraction_task
 
             doc_id_for_ai = str(document.id)
-
-            def _async_ai_extraction():
-                connection.close()
-                try:
-                    run_ai_extraction_task.apply(args=[doc_id_for_ai])
-                except Exception as ai_err:
-                    logger.warning("Background AI extraction error for %s: %s", doc_id_for_ai, ai_err)
-                finally:
-                    connection.close()
-
-            threading.Thread(target=_async_ai_extraction, daemon=True).start()
-            logger.info("[DocumentTask %s] Dispatched run_ai_extraction_task in background thread for Document #%s", task_id, document_id)
+            run_ai_extraction_task.apply(args=[doc_id_for_ai])
+            logger.info("[DocumentTask %s] Dispatched run_ai_extraction_task for Document #%s", task_id, document_id)
         except Exception as ai_dispatch_err:
             logger.warning(
                 "[DocumentTask %s] Could not automatically trigger AI extraction for Document #%s: %s",
@@ -134,11 +128,13 @@ def process_document_task(self, document_id: str) -> dict:
             document_id,
             error_msg,
         )
-        document.refresh_from_db()
-        document.processing_status = DocumentProcessingStatus.FAILED
-        document.processing_progress = 0
-        document.processing_error = error_msg
-        document.save(update_fields=['processing_status', 'processing_progress', 'processing_error', 'updated_at'])
+        if QuotationDocument.objects.filter(id=document_id).exists():
+            QuotationDocument.objects.filter(id=document_id).update(
+                processing_status=DocumentProcessingStatus.FAILED,
+                processing_progress=0,
+                processing_error=error_msg,
+                updated_at=timezone.now(),
+            )
 
         return {
             'status': 'failed',
@@ -170,11 +166,13 @@ def process_document_task(self, document_id: str) -> dict:
                 document_id,
                 error_msg,
             )
-            document.refresh_from_db()
-            document.processing_status = DocumentProcessingStatus.FAILED
-            document.processing_progress = 0
-            document.processing_error = error_msg
-            document.save(update_fields=['processing_status', 'processing_progress', 'processing_error', 'updated_at'])
+            if QuotationDocument.objects.filter(id=document_id).exists():
+                QuotationDocument.objects.filter(id=document_id).update(
+                    processing_status=DocumentProcessingStatus.FAILED,
+                    processing_progress=0,
+                    processing_error=error_msg,
+                    updated_at=timezone.now(),
+                )
             raise
 
     except Exception as exc:
@@ -186,9 +184,11 @@ def process_document_task(self, document_id: str) -> dict:
             document_id,
             error_msg,
         )
-        document.refresh_from_db()
-        document.processing_status = DocumentProcessingStatus.FAILED
-        document.processing_progress = 0
-        document.processing_error = error_msg
-        document.save(update_fields=['processing_status', 'processing_progress', 'processing_error', 'updated_at'])
+        if QuotationDocument.objects.filter(id=document_id).exists():
+            QuotationDocument.objects.filter(id=document_id).update(
+                processing_status=DocumentProcessingStatus.FAILED,
+                processing_progress=0,
+                processing_error=error_msg,
+                updated_at=timezone.now(),
+            )
         raise

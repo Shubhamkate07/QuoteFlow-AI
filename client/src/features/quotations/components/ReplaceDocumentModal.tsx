@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { Modal } from '../../../components/ui/Modal';
 import { Button } from '../../../components/ui/Button';
 import { useQuotation } from '../context/QuotationContext';
+import { getErrorMessage } from '../../../lib/api';
 import type { Quotation } from '../types';
 import {
   RefreshCw,
@@ -90,12 +91,7 @@ export const ReplaceDocumentModal: React.FC<ReplaceDocumentModalProps> = ({
 
       handleClose();
     } catch (err: unknown) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : typeof err === 'object' && err !== null && 'message' in err
-          ? String((err as { message: unknown }).message)
-          : 'Failed to upload replacement document. Please try again.';
+      const message = getErrorMessage(err, 'Failed to upload replacement document. Please try again.');
       setError(message);
       setIsSubmitting(false);
     }

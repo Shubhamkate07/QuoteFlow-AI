@@ -19,12 +19,13 @@ export const RFQ_KEYS = {
 /**
  * Query hook for paginated, searchable, filtered RFQ list
  */
-export function useRfqs(params?: RfqQueryParams) {
+export function useRfqs(params?: RfqQueryParams, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: RFQ_KEYS.list(params),
     queryFn: () => rfqService.getRfqs(params),
     placeholderData: keepPreviousData,
     staleTime: 1000 * 60 * 2, // 2 minutes
+    enabled: options?.enabled ?? true,
   });
 }
 

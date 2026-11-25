@@ -1,7 +1,18 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, type ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import type { Quotation, QuotationStatus, UploadQuotationPayload } from '../types';
-import { quotationService } from '../services/quotationService';
 import type { RfqItem } from '../../rfq/types';
+import { useAuth } from '../../auth/context/AuthContext';
+import { getErrorMessage } from '../../../lib/api';
+import {
+  useQuotations as useQuotationsQuery,
+  useUploadQuotation,
+  useReplaceDocument,
+  useDeleteDocument,
+  useDeleteQuotation,
+  QUOTATION_KEYS,
+  invalidateAllQuotationData,
+} from '../hooks/useQuotationQueries';
 
 interface QuotationContextType {
   quotations: Quotation[];
@@ -30,28 +41,38 @@ interface QuotationContextType {
 const QuotationContext = createContext<QuotationContextType | undefined>(undefined);
 
 export const QuotationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [quotations, setQuotations] = useState<Quotation[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
+  const { isAuthenticated, activeOrganization } = useAuth();
+  const queryClient = useQueryClient();
 
-  const fetchQuotations = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      const data = await quotationService.getQuotations();
-      setQuotations(data);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to fetch quotations from backend.';
-      setError(msg);
-      console.warn('Error fetching quotations:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+  // Primary server state powered exclusively by React Query
+  const {
+    data: quotationsData,
+    isLoading,
+    isError,
+    error: queryError,
+    refetch,
+  } = useQuotationsQuery(undefined, {
+    enabled: isAuthenticated,
+  });
 
+  const uploadQuotationMutation = useUploadQuotation();
+  const replaceDocumentMutation = useReplaceDocument();
+  const deleteDocumentMutation = useDeleteDocument();
+  const deleteQuotationMutation = useDeleteQuotation();
+
+  // Refetch when authenticated or active org changes, and clear React Query cache on logout
   useEffect(() => {
-    fetchQuotations();
-  }, [fetchQuotations]);
+    if (isAuthenticated) {
+      refetch();
+    } else {
+      queryClient.removeQueries({ queryKey: QUOTATION_KEYS.all });
+    }
+  }, [isAuthenticated, activeOrganization?.id, refetch, queryClient]);
+
+  const quotations = isAuthenticated && Array.isArray(quotationsData) ? quotationsData : [];
+  const error = isError
+    ? getErrorMessage(queryError, 'Failed to fetch quotations from backend.')
+    : null;
 
   const getQuotationsByRfq = (rfqId: string): Quotation[] => {
     return quotations.filter((q) => q.rfqId === rfqId);
@@ -66,9 +87,7 @@ export const QuotationProvider: React.FC<{ children: ReactNode }> = ({ children 
     _rfqItems?: RfqItem[],
     onProgress?: (percent: number) => void
   ): Promise<Quotation> => {
-    const createdQuote = await quotationService.uploadQuotationWithDocument(payload, onProgress);
-    setQuotations((prev) => [createdQuote, ...prev.filter((q) => q.id !== createdQuote.id)]);
-    return createdQuote;
+    return await uploadQuotationMutation.mutateAsync({ payload, onProgress });
   };
 
   const replaceDocument = async (
@@ -76,44 +95,35 @@ export const QuotationProvider: React.FC<{ children: ReactNode }> = ({ children 
     newFile: File,
     onProgress?: (percent: number) => void
   ): Promise<void> => {
-    await quotationService.attachDocument(quotationId, newFile, onProgress);
-    const updated = await quotationService.getQuotationById(quotationId);
-    setQuotations((prev) => prev.map((q) => (q.id === quotationId ? updated : q)));
+    await replaceDocumentMutation.mutateAsync({ quotationId, newFile, onProgress });
   };
 
   const deleteDocument = async (documentId: string, quotationId?: string): Promise<void> => {
-    await quotationService.deleteDocument(documentId);
-    if (quotationId) {
-      const updated = await quotationService.getQuotationById(quotationId);
-      setQuotations((prev) => prev.map((q) => (q.id === quotationId ? updated : q)));
-    } else {
-      await fetchQuotations();
-    }
+    await deleteDocumentMutation.mutateAsync({ documentId, quotationId });
   };
 
   const deleteQuotation = async (quotationId: string): Promise<void> => {
-    await quotationService.deleteQuotation(quotationId);
-    setQuotations((prev) => prev.filter((q) => q.id !== quotationId));
+    await deleteQuotationMutation.mutateAsync(quotationId);
   };
 
   const updateQuotationStatus = (quotationId: string, status: QuotationStatus) => {
-    setQuotations((prev) =>
-      prev.map((q) => (q.id === quotationId ? { ...q, status } : q))
-    );
+    queryClient.setQueriesData<Quotation[]>({ queryKey: QUOTATION_KEYS.all }, (old) => {
+      if (!Array.isArray(old)) return old;
+      return old.map((q) => (q.id === quotationId ? { ...q, status } : q));
+    });
   };
 
   const updateQuotation = (id: string, updates: Partial<Quotation>) => {
-    setQuotations((prev) =>
-      prev.map((q) => {
-        if (q.id !== id) return q;
-        return { ...q, ...updates };
-      })
-    );
+    queryClient.setQueriesData<Quotation[]>({ queryKey: QUOTATION_KEYS.all }, (old) => {
+      if (!Array.isArray(old)) return old;
+      return old.map((q) => (q.id === id ? { ...q, ...updates } : q));
+    });
   };
 
   const approveQuotation = (id: string) => {
-    setQuotations((prev) =>
-      prev.map((q) =>
+    queryClient.setQueriesData<Quotation[]>({ queryKey: QUOTATION_KEYS.all }, (old) => {
+      if (!Array.isArray(old)) return old;
+      return old.map((q) =>
         q.id === id
           ? {
               ...q,
@@ -123,15 +133,20 @@ export const QuotationProvider: React.FC<{ children: ReactNode }> = ({ children 
               approvedBy: 'Current User',
             }
           : q
-      )
-    );
+      );
+    });
+    invalidateAllQuotationData(queryClient, id);
+  };
+
+  const refreshQuotations = async () => {
+    await refetch();
   };
 
   return (
     <QuotationContext.Provider
       value={{
         quotations,
-        isLoading,
+        isLoading: isAuthenticated ? isLoading : false,
         error,
         getQuotationsByRfq,
         getQuotationById,
@@ -142,7 +157,7 @@ export const QuotationProvider: React.FC<{ children: ReactNode }> = ({ children 
         updateQuotationStatus,
         updateQuotation,
         approveQuotation,
-        refreshQuotations: fetchQuotations,
+        refreshQuotations,
       }}
     >
       {children}

@@ -1,4 +1,5 @@
-import React, { createContext, useContext } from 'react';
+import React, { createContext, useContext, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import type { Rfq, RfqItem } from '../types';
 import type { RfqFormValues, RfqItemFormValues } from '../schemas/rfqSchema';
 import {
@@ -9,8 +10,10 @@ import {
   useAddRfqItem,
   useUpdateRfqItem,
   useDeleteRfqItem,
+  RFQ_KEYS,
 } from '../hooks/useRfqQueries';
 import { rfqService } from '../services/rfqService';
+import { useAuth } from '../../auth/context/AuthContext';
 
 interface RfqContextType {
   rfqs: Rfq[];
@@ -30,8 +33,13 @@ interface RfqContextType {
 const RfqContext = createContext<RfqContextType | undefined>(undefined);
 
 export const RfqProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Fetch initial list of RFQs for workspace subscribers
-  const { data, isLoading, isError, refetch } = useRfqs();
+  const { isAuthenticated, activeOrganization } = useAuth();
+  const queryClient = useQueryClient();
+
+  // Fetch initial list of RFQs only when user is authenticated
+  const { data, isLoading, isError, refetch } = useRfqs(undefined, {
+    enabled: isAuthenticated,
+  });
 
   const createRfqMutation = useCreateRfq();
   const updateRfqMutation = useUpdateRfq();
@@ -40,7 +48,16 @@ export const RfqProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateRfqItemMutation = useUpdateRfqItem();
   const deleteRfqItemMutation = useDeleteRfqItem();
 
-  const rfqs = data?.results || [];
+  // Refetch when authenticated or active organization changes, and clear cache on logout
+  useEffect(() => {
+    if (isAuthenticated) {
+      refetch();
+    } else {
+      queryClient.removeQueries({ queryKey: RFQ_KEYS.all });
+    }
+  }, [isAuthenticated, activeOrganization?.id, refetch, queryClient]);
+
+  const rfqs = isAuthenticated ? (data?.results || []) : [];
 
   const getRfqById = (id: string): Rfq | undefined => {
     return rfqs.find((r) => r.id === id || r.rfqNumber === id);
@@ -83,8 +100,8 @@ export const RfqProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     <RfqContext.Provider
       value={{
         rfqs,
-        isLoading,
-        isError,
+        isLoading: isAuthenticated ? isLoading : false,
+        isError: isAuthenticated ? isError : false,
         refetch,
         getRfqById,
         fetchRfqById,

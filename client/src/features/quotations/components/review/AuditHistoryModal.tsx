@@ -12,6 +12,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { formatDateTime } from '../../../../utils/formatters';
+import { getErrorMessage } from '../../../../lib/api';
 
 interface AuditHistoryModalProps {
   isOpen: boolean;
@@ -62,7 +63,7 @@ export const AuditHistoryModal: React.FC<AuditHistoryModalProps> = ({
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <div>
               <span className="font-semibold">Failed to load audit history: </span>
-              {error instanceof Error ? error.message : 'Unknown error'}
+              {getErrorMessage(error, 'Unknown error')}
             </div>
           </div>
         ) : auditEntries.length === 0 ? (

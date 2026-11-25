@@ -14,19 +14,24 @@ interface ApproveExtractionModalProps {
   isOpen: boolean;
   onClose: () => void;
   extraction: BackendQuotationExtraction;
-  onConfirmApprove: (payload: { review_notes?: string; apply_to_quotation?: boolean }) => void;
+  existingItemCount?: number;
+  onConfirmApprove: (payload: { review_notes?: string; apply_to_quotation?: boolean; replace_items?: boolean }) => void;
   isApproving?: boolean;
+  error?: string | null;
 }
 
 export const ApproveExtractionModal: React.FC<ApproveExtractionModalProps> = ({
   isOpen,
   onClose,
   extraction,
+  existingItemCount,
   onConfirmApprove,
   isApproving = false,
+  error = null,
 }) => {
   const [reviewNotes, setReviewNotes] = useState<string>('');
   const [applyToQuotation, setApplyToQuotation] = useState<boolean>(true);
+  const [replaceItems, setReplaceItems] = useState<boolean>(true);
 
   const errorFlags = (extraction.validation_flags || []).filter((f) => f.severity === 'ERROR');
   const warningFlags = (extraction.validation_flags || []).filter((f) => f.severity === 'WARNING');
@@ -41,6 +46,7 @@ export const ApproveExtractionModal: React.FC<ApproveExtractionModalProps> = ({
     onConfirmApprove({
       review_notes: reviewNotes.trim() || undefined,
       apply_to_quotation: applyToQuotation,
+      replace_items: replaceItems,
     });
   };
 
@@ -76,6 +82,17 @@ export const ApproveExtractionModal: React.FC<ApproveExtractionModalProps> = ({
       }
     >
       <div className="space-y-4">
+        {/* Error Alert Banner */}
+        {error && (
+          <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg flex items-start gap-2 text-xs text-rose-800 animate-in fade-in">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-semibold">Approval failed:</span>
+              <p className="mt-0.5 text-rose-700 leading-relaxed text-[11px]">{error}</p>
+            </div>
+          </div>
+        )}
+
         {/* Verification Summary Card */}
         <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
           <div className="flex justify-between">
@@ -141,23 +158,31 @@ export const ApproveExtractionModal: React.FC<ApproveExtractionModalProps> = ({
 
         {/* Checkbox: Apply to quotation */}
         {extraction.quotation_id && (
-          <div className="flex items-start gap-2 pt-1">
-            <input
-              id="apply-to-quotation-checkbox"
-              type="checkbox"
-              checked={applyToQuotation}
-              onChange={(e) => setApplyToQuotation(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-            />
-            <label
-              htmlFor="apply-to-quotation-checkbox"
-              className="text-xs text-slate-700 select-none cursor-pointer"
-            >
-              <strong className="text-slate-900 font-semibold block">
-                Apply data to official Quotation record
-              </strong>
-              Synchronize supplier details, line items, and financial totals directly to the linked RFQ quotation.
-            </label>
+          <div className="space-y-2 pt-1">
+            <div className="flex items-start gap-2">
+              <input
+                id="apply-to-quotation-checkbox"
+                type="checkbox"
+                checked={applyToQuotation}
+                onChange={(e) => setApplyToQuotation(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+              />
+              <label
+                htmlFor="apply-to-quotation-checkbox"
+                className="text-xs text-slate-700 select-none cursor-pointer"
+              >
+                <strong className="text-slate-900 font-semibold block">
+                  Apply data to official Quotation record
+                </strong>
+                Synchronize supplier details, line items, and financial totals directly to the linked RFQ quotation.
+              </label>
+            </div>
+
+            {applyToQuotation && (
+              <div className="ml-6 p-2 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-800">
+                Notice: This will replace {existingItemCount ?? extraction.items_count} existing line items extracted previously. Any manually added items will be safely preserved.
+              </div>
+            )}
           </div>
         )}
 

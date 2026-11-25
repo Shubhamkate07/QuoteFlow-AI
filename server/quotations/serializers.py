@@ -155,6 +155,7 @@ class QuotationItemSerializer(serializers.ModelSerializer):
             'rfq_item_name',
             'match_type',
             'match_type_display',
+            'source',
             'position',
             'description',
             'manufacturer',

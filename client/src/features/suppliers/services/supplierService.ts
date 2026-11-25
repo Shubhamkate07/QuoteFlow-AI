@@ -1,4 +1,4 @@
-import api from '../../../lib/api';
+import api, { toRelativeApiPath } from '../../../lib/api';
 import type { PaginatedResponse } from '../../../types/api';
 import type {
   Supplier,
@@ -12,7 +12,8 @@ import type { SupplierFormValues } from '../schemas/supplierSchema';
 
 export const supplierService = {
   /**
-   * Fetches paginated list of suppliers with search, category, and status filters
+   * Fetches paginated list of suppliers with search, category, and status filters.
+   * If no page is specified, follows 'next' links to collect all pages.
    */
   getSuppliers: async (params?: SupplierQueryParams): Promise<PaginatedResponse<Supplier>> => {
     const cleanParams: Record<string, any> = {};
@@ -22,15 +23,52 @@ export const supplierService = {
     if (params?.status && params.status !== 'all') cleanParams.status = params.status;
     if (params?.page) cleanParams.page = params.page;
 
-    const response = await api.get<PaginatedResponse<BackendSupplier>>('/suppliers/', {
-      params: cleanParams,
-    });
+    // When an explicit page is requested (e.g. paginated table), return single page
+    if (params?.page) {
+      const response = await api.get<PaginatedResponse<BackendSupplier>>('/suppliers/', {
+        params: cleanParams,
+      });
+
+      return {
+        count: response.data.count,
+        next: response.data.next,
+        previous: response.data.previous,
+        results: (response.data.results || []).map((item) => adaptBackendSupplier(item)),
+      };
+    }
+
+    // When no specific page is requested, follow `next` to collect all pages
+    let allItems: BackendSupplier[] = [];
+    let nextUrl: string | null = '/suppliers/';
+    let totalCount = 0;
+    let isFirst = true;
+
+    while (nextUrl) {
+      const response = await api.get<PaginatedResponse<BackendSupplier>>(nextUrl, {
+        params: isFirst ? cleanParams : undefined,
+      });
+      isFirst = false;
+
+      const rawData = response.data;
+      if (Array.isArray(rawData)) {
+        allItems = rawData;
+        totalCount = rawData.length;
+        break;
+      }
+      if (typeof rawData?.count === 'number') {
+        totalCount = rawData.count;
+      }
+      if (Array.isArray(rawData?.results)) {
+        allItems = allItems.concat(rawData.results);
+      }
+      nextUrl = rawData?.next ? toRelativeApiPath(rawData.next) : null;
+    }
 
     return {
-      count: response.data.count,
-      next: response.data.next,
-      previous: response.data.previous,
-      results: (response.data.results || []).map((item) => adaptBackendSupplier(item)),
+      count: totalCount || allItems.length,
+      next: null,
+      previous: null,
+      results: allItems.map((item) => adaptBackendSupplier(item)),
     };
   },
 

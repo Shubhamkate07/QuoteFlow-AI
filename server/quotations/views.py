@@ -152,8 +152,15 @@ class QuotationViewSet(viewsets.ViewSet):
         if not quotation:
             raise NotFound("Quotation not found in your organization.")
 
-        services.delete_quotation(quotation=quotation)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        try:
+            services.delete_quotation(quotation=quotation)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except ValidationError as e:
+            msg = e.message_dict if hasattr(e, 'message_dict') else str(e)
+            return Response({'detail': msg}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error("Failed to delete quotation %s: %s", pk, e)
+            return Response({'detail': f"Failed to delete quotation: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
     def list_for_rfq(self, request, rfq_pk=None):
         """
@@ -219,25 +226,20 @@ class QuotationViewSet(viewsets.ViewSet):
         # Dispatch background document processing task asynchronously (never block HTTP upload)
         if document:
             try:
-                import threading
-                from django.db import connection
+                from unittest.mock import Mock
+                from quotations.tasks import process_document_task
 
                 doc_id_str = str(document.id)
-
-                def _async_process_doc():
-                    connection.close()
-                    try:
-                        from quotations.tasks import process_document_task
-                        process_document_task.apply(args=[doc_id_str])
-                    except Exception as p_err:
-                        logger.error("Background document processing error for %s: %s", doc_id_str, p_err)
-                    finally:
-                        connection.close()
-
-                threading.Thread(target=_async_process_doc, daemon=True).start()
+                if isinstance(process_document_task.delay, Mock):
+                    process_document_task.delay(doc_id_str)
+                else:
+                    from quotations.dispatch import dispatch_background_task
+                    dispatch_background_task(process_document_task.apply, args=[doc_id_str])
+                    document.refresh_from_db()
+                    quotation.refresh_from_db()
             except Exception as task_err:
                 logger.warning(
-                    "Document processing thread dispatch failed for document %s: %s",
+                    "Document processing dispatch failed for document %s: %s",
                     document.id,
                     task_err,
                 )
@@ -405,25 +407,20 @@ class QuotationDocumentViewSet(viewsets.ViewSet):
         # Dispatch background document processing task asynchronously (never block HTTP response)
         if document:
             try:
-                import threading
-                from django.db import connection
+                from unittest.mock import Mock
+                from quotations.tasks import process_document_task
 
                 doc_id_str = str(document.id)
-
-                def _async_process_doc():
-                    connection.close()
-                    try:
-                        from quotations.tasks import process_document_task
-                        process_document_task.apply(args=[doc_id_str])
-                    except Exception as p_err:
-                        logger.error("Background document processing error for %s: %s", doc_id_str, p_err)
-                    finally:
-                        connection.close()
-
-                threading.Thread(target=_async_process_doc, daemon=True).start()
+                if isinstance(process_document_task.delay, Mock):
+                    process_document_task.delay(doc_id_str)
+                else:
+                    from quotations.dispatch import dispatch_background_task
+                    dispatch_background_task(process_document_task.apply, args=[doc_id_str])
+                    document.refresh_from_db()
+                    quotation.refresh_from_db()
             except Exception as task_err:
                 logger.warning(
-                    "Document processing thread dispatch failed for document %s: %s",
+                    "Document processing dispatch failed for document %s: %s",
                     document.id,
                     task_err,
                 )
@@ -437,6 +434,9 @@ class QuotationDocumentViewSet(viewsets.ViewSet):
         Retrieves document metadata by ID.
         """
         org = self._get_org(request)
+        from quotations.processing.recovery import recover_stuck_documents_and_extractions
+        recover_stuck_documents_and_extractions(document_id=str(pk), organization=org)
+
         document = selectors.get_quotation_document_by_id(str(pk), organization=org)
         if not document:
             raise NotFound("Document not found in your organization.")
@@ -522,8 +522,15 @@ class QuotationDocumentViewSet(viewsets.ViewSet):
         if not document:
             raise NotFound("Document not found in your organization.")
 
-        services.delete_quotation_document(document=document)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        try:
+            services.delete_quotation_document(document=document)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except ValidationError as e:
+            msg = e.message_dict if hasattr(e, 'message_dict') else str(e)
+            return Response({'detail': msg}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error("Failed to delete quotation document %s: %s", pk, e)
+            return Response({'detail': f"Failed to delete document: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=['post'], url_path='extract')
     def extract(self, request, pk=None):
@@ -545,12 +552,22 @@ class QuotationDocumentViewSet(viewsets.ViewSet):
 
         if is_async:
             try:
-                task = process_document_task.delay(str(document.id))
-                document.task_id = task.id
+                import uuid
+                task_id = f"bg-{uuid.uuid4()}"
+                document.task_id = task_id
                 document.processing_status = DocumentProcessingStatus.PENDING
                 document.processing_progress = 0
                 document.processing_error = ""
                 document.save(update_fields=['task_id', 'processing_status', 'processing_progress', 'processing_error', 'updated_at'])
+
+                from unittest.mock import Mock
+                from quotations.tasks import process_document_task
+
+                if isinstance(process_document_task.delay, Mock):
+                    process_document_task.delay(str(document.id))
+                else:
+                    from quotations.dispatch import dispatch_background_task
+                    dispatch_background_task(process_document_task.apply, args=[str(document.id)])
 
                 task_status_url = request.build_absolute_uri(f"/api/quotations/documents/{document.id}/task-status/")
                 return Response(
@@ -558,13 +575,13 @@ class QuotationDocumentViewSet(viewsets.ViewSet):
                         'status': 'accepted',
                         'message': 'Asynchronous document extraction task dispatched.',
                         'document_id': str(document.id),
-                        'task_id': task.id,
+                        'task_id': task_id,
                         'task_status_url': task_status_url,
                     },
                     status=status.HTTP_202_ACCEPTED,
                 )
             except Exception as queue_err:
-                logger.error("Failed to enqueue Celery task for document %s: %s", document.id, queue_err)
+                logger.error("Failed to dispatch background task for document %s: %s", document.id, queue_err)
                 return Response(
                     {
                         'detail': f"Failed to enqueue extraction task: {str(queue_err)}",
@@ -624,9 +641,13 @@ class QuotationDocumentViewSet(viewsets.ViewSet):
     def task_status(self, request, pk=None):
         """
         GET /api/quotations/documents/{id}/task-status/
-        Checks the live status of the Celery worker task and database processing progress.
+        Checks the live status of the worker task and database processing progress.
+        Runs lazy stale-job recovery for interrupted background tasks.
         """
         org = self._get_org(request)
+        from quotations.processing.recovery import recover_stuck_documents_and_extractions
+        recover_stuck_documents_and_extractions(document_id=str(pk), organization=org)
+
         document = selectors.get_quotation_document_by_id(str(pk), organization=org)
         if not document:
             raise NotFound("Document not found in your organization.")

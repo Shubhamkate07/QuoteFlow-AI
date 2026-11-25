@@ -92,7 +92,8 @@ class DocumentProcessingService:
         5. Updates quotation document status to 'completed' with 100% progress.
         """
         # Late import to prevent circular dependencies
-        from quotations.models import DocumentProcessingStatus, DocumentExtractionResult as DBMigrationResult
+        from quotations.models import QuotationDocument, DocumentProcessingStatus, DocumentExtractionResult as DBMigrationResult
+        from django.utils import timezone
 
         if not document.file or not document.file.name:
             raise EmptyDocumentError(f"QuotationDocument #{document.id} does not have an attached file.")
@@ -100,28 +101,44 @@ class DocumentProcessingService:
         from quotations.processing.fallback_generator import ensure_quotation_document_file
         file_path = ensure_quotation_document_file(document)
 
+        # Check existence before modifying
+        if not QuotationDocument.objects.filter(pk=document.id).exists():
+            return DocumentExtractionResult(raw_text="", structured_content={}, document_type="unknown")
+
         # Step 1: Mark as processing
-        document.processing_status = DocumentProcessingStatus.PROCESSING
-        document.processing_progress = 20
-        document.processing_error = ""
-        document.save(update_fields=['processing_status', 'processing_progress', 'processing_error', 'updated_at'])
+        QuotationDocument.objects.filter(pk=document.id).update(
+            processing_status=DocumentProcessingStatus.PROCESSING,
+            processing_progress=20,
+            processing_error="",
+            updated_at=timezone.now(),
+        )
 
         try:
             # Step 2: Determine extractor
             file_format = document.file_type or document.file_extension
             extractor = cls.get_extractor(file_format, **kwargs)
 
-            document.processing_progress = 50
-            document.save(update_fields=['processing_progress', 'updated_at'])
+            if not QuotationDocument.objects.filter(pk=document.id).exists():
+                return DocumentExtractionResult(raw_text="", structured_content={}, document_type=file_format)
+
+            QuotationDocument.objects.filter(pk=document.id).update(
+                processing_progress=50,
+                updated_at=timezone.now(),
+            )
 
             # Step 3: Run extraction
             result = extractor.extract(file_path)
 
-            document.processing_progress = 85
-            document.save(update_fields=['processing_progress', 'updated_at'])
+            if not QuotationDocument.objects.filter(pk=document.id).exists():
+                return result
+
+            QuotationDocument.objects.filter(pk=document.id).update(
+                processing_progress=85,
+                updated_at=timezone.now(),
+            )
 
             # Step 4: Persist extraction result into the database
-            if save:
+            if save and QuotationDocument.objects.filter(pk=document.id).exists():
                 # Check for existing extraction result or create new
                 DBMigrationResult.objects.update_or_create(
                     document=document,
@@ -145,16 +162,28 @@ class DocumentProcessingService:
                 )
 
             # Step 5: Mark document completed
-            document.processing_status = DocumentProcessingStatus.COMPLETED
-            document.processing_progress = 100
-            document.processing_error = ""
-            document.save(update_fields=['processing_status', 'processing_progress', 'processing_error', 'updated_at'])
+            if QuotationDocument.objects.filter(pk=document.id).exists():
+                QuotationDocument.objects.filter(pk=document.id).update(
+                    processing_status=DocumentProcessingStatus.COMPLETED,
+                    processing_progress=100,
+                    processing_error="",
+                    updated_at=timezone.now(),
+                )
+                document.processing_status = DocumentProcessingStatus.COMPLETED
+                document.processing_progress = 100
+                document.processing_error = ""
 
             return result
 
         except Exception as err:
-            document.processing_status = DocumentProcessingStatus.FAILED
-            document.processing_progress = 0
-            document.processing_error = str(err)
-            document.save(update_fields=['processing_status', 'processing_progress', 'processing_error', 'updated_at'])
+            if QuotationDocument.objects.filter(pk=document.id).exists():
+                QuotationDocument.objects.filter(pk=document.id).update(
+                    processing_status=DocumentProcessingStatus.FAILED,
+                    processing_progress=0,
+                    processing_error=str(err),
+                    updated_at=timezone.now(),
+                )
+                document.processing_status = DocumentProcessingStatus.FAILED
+                document.processing_progress = 0
+                document.processing_error = str(err)
             raise

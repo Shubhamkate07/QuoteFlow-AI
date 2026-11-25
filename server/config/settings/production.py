@@ -87,25 +87,23 @@ else:
 # ==========================================
 CORS_ALLOW_ALL_ORIGINS = get_env_bool('CORS_ALLOW_ALL_ORIGINS', default=False)
 cors_origins = get_env_list('CORS_ALLOWED_ORIGINS')
-if not cors_origins:
-    cors_origins = ['http://localhost:5173']
 CORS_ALLOWED_ORIGINS = [o for o in cors_origins if '*' not in o]
 
-# Dynamic regex matching for Vercel (*.vercel.app), Netlify (*.netlify.app), Render, and localhost
-CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^https://.*\.vercel\.app$",
-    r"^https://.*\.netlify\.app$",
-    r"^https://.*\.onrender\.com$",
-    r"^http://localhost(:\d+)?$",
-    r"^http://127\.0\.0\.1(:\d+)?$",
-]
+# Dynamic regex matching configurable via env (CORS_ALLOWED_ORIGIN_REGEXES, comma-separated)
+# Dropped localhost and open wildcards from production defaults
+env_origin_regexes = get_env_list('CORS_ALLOWED_ORIGIN_REGEXES')
+if env_origin_regexes:
+    CORS_ALLOWED_ORIGIN_REGEXES = env_origin_regexes
+else:
+    CORS_ALLOWED_ORIGIN_REGEXES = [
+        r"^https://quoteflow(-[a-zA-Z0-9]+)?\.netlify\.app$",
+        r"^https://quoteflow(-[a-zA-Z0-9]+)?\.vercel\.app$",
+    ]
 
 CORS_ALLOW_CREDENTIALS = True
 
 csrf_origins = get_env_list('CSRF_TRUSTED_ORIGINS')
-if not csrf_origins:
-    csrf_origins = ['https://*.vercel.app', 'https://*.netlify.app', 'https://*.onrender.com']
-CSRF_TRUSTED_ORIGINS = csrf_origins
+CSRF_TRUSTED_ORIGINS = [o for o in csrf_origins if o]
 
 # ==========================================
 # Production DRF Configuration (Strict JSON Only)

@@ -1,4 +1,4 @@
-import api from '../../../lib/api';
+import api, { toRelativeApiPath } from '../../../lib/api';
 import type { PaginatedResponse } from '../../../types/api';
 import type {
   Rfq,
@@ -16,7 +16,8 @@ import type { RfqFormValues, RfqItemFormValues } from '../schemas/rfqSchema';
 
 export const rfqService = {
   /**
-   * Fetches paginated list of RFQs with optional search, status, and currency filters
+   * Fetches paginated list of RFQs with optional search, status, and currency filters.
+   * If no page is specified, follows 'next' links to collect all pages.
    */
   getRfqs: async (params?: RfqQueryParams): Promise<PaginatedResponse<Rfq>> => {
     const cleanParams: Record<string, any> = {};
@@ -25,20 +26,57 @@ export const rfqService = {
     if (params?.currency && params.currency !== 'all') cleanParams.currency = params.currency;
     if (params?.page) cleanParams.page = params.page;
 
-    const response = await api.get<any>('/rfqs/', {
-      params: cleanParams,
-    });
+    // Single page requested (e.g. paginated table view)
+    if (params?.page) {
+      const response = await api.get<any>('/rfqs/', {
+        params: cleanParams,
+      });
 
-    const rawData = response.data;
-    const items = Array.isArray(rawData)
-      ? rawData
-      : (Array.isArray(rawData?.results) ? rawData.results : []);
+      const rawData = response.data;
+      const items = Array.isArray(rawData)
+        ? rawData
+        : (Array.isArray(rawData?.results) ? rawData.results : []);
+
+      return {
+        count: typeof rawData?.count === 'number' ? rawData.count : items.length,
+        next: rawData?.next || null,
+        previous: rawData?.previous || null,
+        results: items.map((item: any) => adaptBackendRfq(item)),
+      };
+    }
+
+    // No page specified: follow `next` to collect all pages
+    let allItems: any[] = [];
+    let nextUrl: string | null = '/rfqs/';
+    let totalCount = 0;
+    let isFirst = true;
+
+    while (nextUrl) {
+      const response = await api.get<any>(nextUrl, {
+        params: isFirst ? cleanParams : undefined,
+      });
+      isFirst = false;
+
+      const rawData = response.data;
+      if (Array.isArray(rawData)) {
+        allItems = rawData;
+        totalCount = rawData.length;
+        break;
+      }
+      if (typeof rawData?.count === 'number') {
+        totalCount = rawData.count;
+      }
+      if (Array.isArray(rawData?.results)) {
+        allItems = allItems.concat(rawData.results);
+      }
+      nextUrl = rawData?.next ? toRelativeApiPath(rawData.next) : null;
+    }
 
     return {
-      count: typeof rawData?.count === 'number' ? rawData.count : items.length,
-      next: rawData?.next || null,
-      previous: rawData?.previous || null,
-      results: items.map((item: any) => adaptBackendRfq(item)),
+      count: totalCount || allItems.length,
+      next: null,
+      previous: null,
+      results: allItems.map((item: any) => adaptBackendRfq(item)),
     };
   },
 
